@@ -54,7 +54,7 @@ API base: `http://localhost:8090`
 - Uses `Dockerfile` + `railway.toml`
 - Health check: `/api/health`
 - Reuse Spring env vars; remove `JAVA_OPTS` / `SPRING_*`
-- Optional Wave 2: `DEEPSEEK_API_KEY`, `CLOUDINARY_*`, `STRIPE_*`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_YEARLY`
+- Optional Wave 2: `DEEPSEEK_API_KEY`, `OPENAI_API_KEY` (pantry vision), `CLOUDINARY_*`, `STRIPE_*`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_YEARLY`
 
 ## Env inheritance
 

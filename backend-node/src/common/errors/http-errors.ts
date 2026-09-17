@@ -26,3 +26,9 @@ export class QuotaExceededError extends HttpException {
     this.quotaKey = quotaKey;
   }
 }
+
+export class ServiceUnavailableError extends HttpException {
+  constructor(message: string) {
+    super(message, HttpStatus.SERVICE_UNAVAILABLE);
+  }
+}

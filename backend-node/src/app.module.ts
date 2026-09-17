@@ -19,6 +19,7 @@ import { SubscriptionModule } from './subscription/subscription.module';
 import { UploadModule } from './upload/upload.module';
 import { UserPreferencesModule } from './user-preferences/user-preferences.module';
 import { UsersModule } from './users/users.module';
+import { PantryVisionModule } from './pantry-vision/pantry-vision.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { UsersModule } from './users/users.module';
     UploadModule,
     SubscriptionModule,
     ChatModule,
+    PantryVisionModule,
   ],
   controllers: [AppController],
   providers: [

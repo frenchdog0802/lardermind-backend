@@ -4,6 +4,9 @@
 
 This repo has **four surfaces** and **one API** (NestJS in `backend-node/`). The former Spring Boot `backend/` has been removed. There is no root monorepo tooling — `frontend/` and `mobile/` are nested git remotes; `backend-node/` lives in this repo.
 
+**Target hosting:** Cloudflare (Pages → web, Workers → API, D1 / R2 / …). See [docs/architecture/cloudflare-target.md](./docs/architecture/cloudflare-target.md).  
+**Transition API:** Nest `backend-node` + Postgres (Android launch path unchanged).
+
 ---
 
 ## Start here (5 minutes)
@@ -11,7 +14,10 @@ This repo has **four surfaces** and **one API** (NestJS in `backend-node/`). The
 | If you want to… | Read this |
 |-----------------|-----------|
 | Understand what exists and what's broken | [PROJECT_STATUS.md](./PROJECT_STATUS.md) |
+| **Dev workflow (feature / bug fix) — source of truth** | [docs/workflow/README.md](./docs/workflow/README.md) · [AGENTS.md](./AGENTS.md) |
 | See folder layout, APIs, and data model | [docs/Overall Project Structure.md](./docs/Overall%20Project%20Structure.md) |
+| Cloudflare target architecture | [docs/architecture/cloudflare-target.md](./docs/architecture/cloudflare-target.md) |
+| Cloudflare Workers API (parallel) | [backend-cf/README.md](./backend-cf/README.md) · [docs/features/backend-cf-api.md](./docs/features/backend-cf-api.md) |
 | Run the Nest backend | [backend-node/README.md](./backend-node/README.md) |
 | iOS / TestFlight launch checklist | [docs/store-launch-todo.md](./docs/store-launch-todo.md) |
 | Work on web UI / design tokens | [frontend/src/index.css](./frontend/src/index.css) + [design-system/lardermind/MASTER.md](./frontend/design-system/lardermind/MASTER.md) |
@@ -23,10 +29,14 @@ This repo has **four surfaces** and **one API** (NestJS in `backend-node/`). The
 ```
 LarderMind/
 ├── backend-node/     NestJS + Prisma API (default :8090) — primary
+├── backend-cf/       Cloudflare Workers + D1 API (parallel; URL cutover when ready)
 ├── frontend/         React + Vite web app (nested git remote)
 ├── mobile/           React Native + Expo mobile app (nested git remote)
 ├── landing/          Static marketing / waitlist page
-├── docs/             Architecture & feature docs
+├── docs/             Architecture, features, bugs, workflow
+├── docs/workflow/    Feature / bug-fix process (source of truth)
+├── AGENTS.md         Agent entrypoint → docs/workflow
+├── .cursor/rules/    Cursor always-on workflow rule
 ├── PROJECT_STATUS.md Living status doc (features, gaps, next tasks)
 └── tasks/            Task trackers for larger migrations
 ```
@@ -63,13 +73,15 @@ Point mobile: `EXPO_PUBLIC_API_BASE_URL=http://localhost:8090/api/` (or your dep
 
 ### Web app (port 5173)
 
+Start Nest first (`backend-node` on :8090). Vite proxies `/api` and `/auth` to Nest when `VITE_API_BASE_URL` is empty.
+
 ```powershell
 cd frontend
 npm install
 npm run dev
 ```
 
-Optional: set `VITE_API_BASE_URL=http://localhost:8090`.
+Optional: set `VITE_API_BASE_URL=http://localhost:8090`. For Cloudflare Pages deploy notes, see `frontend/README.md`.
 
 ### Mobile (Expo)
 
@@ -122,6 +134,8 @@ Fonts: **Fraunces** (display) + **Source Sans 3** (body).
 ---
 
 ## Architecture
+
+**Now (ship):** Nest + Postgres. **Target:** Cloudflare — [docs/architecture/cloudflare-target.md](./docs/architecture/cloudflare-target.md).
 
 ```mermaid
 flowchart LR

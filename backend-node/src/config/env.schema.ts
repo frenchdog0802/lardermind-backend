@@ -71,6 +71,12 @@ export const envSchema = z.object({
     emptyToUndefined,
     z.coerce.number().int().optional(),
   ),
+  OPENAI_API_KEY: optionalString,
+  OPENAI_VISION_MODEL: optionalString,
+  OPENAI_VISION_TIMEOUT_MS: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().positive().optional(),
+  ),
   STRIPE_SECRET_KEY: optionalString,
   STRIPE_WEBHOOK_SECRET: optionalString,
   STRIPE_PRICE_MONTHLY: optionalString,
@@ -141,6 +147,9 @@ export type AppConfig = {
     llmModel?: string;
     llmTemperature?: number;
     llmMaxTokens?: number;
+    openaiApiKey?: string;
+    openaiVisionModel?: string;
+    openaiVisionTimeoutMs?: number;
     stripeSecretKey?: string;
     stripeWebhookSecret?: string;
     stripePriceMonthly?: string;
@@ -205,6 +214,9 @@ export function toAppConfig(env: EnvVars): AppConfig {
       llmModel: env.LLM_MODEL,
       llmTemperature: env.LLM_TEMPERATURE,
       llmMaxTokens: env.LLM_MAX_TOKENS,
+      openaiApiKey: env.OPENAI_API_KEY,
+      openaiVisionModel: env.OPENAI_VISION_MODEL,
+      openaiVisionTimeoutMs: env.OPENAI_VISION_TIMEOUT_MS,
       stripeSecretKey: env.STRIPE_SECRET_KEY,
       stripeWebhookSecret: env.STRIPE_WEBHOOK_SECRET,
       stripePriceMonthly: env.STRIPE_PRICE_MONTHLY,

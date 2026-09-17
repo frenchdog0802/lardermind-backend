@@ -7,6 +7,9 @@ import {
   resolveBaseUnit,
   resolveDisplayUnit,
   resolveKind,
+  convert,
+  kindOf,
+  normalize,
 } from '../common/unit/unit-converter';
 import { unitKindToApiValue } from '../common/unit/unit-kind';
 import { PrismaService } from '../prisma/prisma.service';
@@ -145,6 +148,103 @@ export class PantryItemsService {
 
     await this.prisma.pantryItem.delete({ where: { id } });
     return { message: 'Pantry item deleted' };
+  }
+
+  /**
+   * Create or add quantity for an ingredient by name.
+   * Same unit-kind: convert into existing unit then add.
+   * Otherwise: raw numeric add (chat-tool parity fallback).
+   */
+  async mergeAddItem(
+    userId: string,
+    input: {
+      name: string;
+      quantity: number;
+      unit?: string;
+      notes?: string;
+    },
+  ): Promise<{ item: PantryItemDto; merged: boolean }> {
+    const name = input.name?.trim();
+    if (!name) {
+      throw new NotFoundError('Ingredient not found');
+    }
+
+    const quantity = Number.isFinite(input.quantity)
+      ? Number(input.quantity)
+      : 0;
+    const ingredient = await this.resolveIngredient({ name });
+    const existing = await this.prisma.pantryItem.findFirst({
+      where: { userId, ingredientId: ingredient.id },
+      include: { ingredient: true },
+    });
+
+    const incomingUnit =
+      input.unit?.trim() ||
+      ingredient.baseUnit ||
+      ingredient.defaultUnit ||
+      null;
+
+    if (!existing) {
+      const now = BigInt(nowUnixSeconds());
+      const created = await this.prisma.pantryItem.create({
+        data: {
+          userId,
+          ingredientId: ingredient.id,
+          quantity,
+          unit: incomingUnit,
+          notes: input.notes ?? null,
+          createdAt: now,
+          updatedAt: now,
+        },
+        include: { ingredient: true },
+      });
+      return { item: this.toDto(created), merged: false };
+    }
+
+    const addQty = this.resolveMergeQuantity(
+      quantity,
+      incomingUnit,
+      existing.quantity,
+      existing.unit,
+    );
+    const nextUnit =
+      existing.unit && existing.unit.trim().length > 0
+        ? existing.unit
+        : incomingUnit;
+
+    const updated = await this.prisma.pantryItem.update({
+      where: { id: existing.id },
+      data: {
+        quantity: addQty,
+        unit: nextUnit,
+        notes: input.notes !== undefined ? input.notes : existing.notes,
+        updatedAt: BigInt(nowUnixSeconds()),
+      },
+      include: { ingredient: true },
+    });
+    return { item: this.toDto(updated), merged: true };
+  }
+
+  private resolveMergeQuantity(
+    incomingQty: number,
+    incomingUnit: string | null,
+    existingQty: number,
+    existingUnit: string | null,
+  ): number {
+    const from = normalize(incomingUnit);
+    const to = normalize(existingUnit);
+    if (from && to && from !== to) {
+      const fromKind = kindOf(from);
+      const toKind = kindOf(to);
+      if (fromKind != null && toKind != null && fromKind === toKind) {
+        try {
+          return existingQty + convert(incomingQty, from, to);
+        } catch {
+          // fall through to raw add
+        }
+      }
+    }
+    return existingQty + incomingQty;
   }
 
   private resolveCreateFields(dto: CreatePantryItemRequestDto): {

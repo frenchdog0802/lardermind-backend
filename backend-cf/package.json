@@ -1,0 +1,24 @@
+{
+  "name": "lardermind-api-cf",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local",
+    "dev:remote": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "db:migrate:local": "wrangler d1 migrations apply lardermind --local",
+    "db:migrate:remote": "wrangler d1 migrations apply lardermind --remote",
+    "db:create": "wrangler d1 create lardermind"
+  },
+  "dependencies": {
+    "hono": "^4.9.6",
+    "jose": "^6.1.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250913.0",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.36.0"
+  }
+}
