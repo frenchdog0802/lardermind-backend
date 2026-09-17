@@ -1,32 +1,27 @@
 ﻿# LarderMind — Project Status
 
-**Last updated:** 2026-07-17  
-**Scope:** Based on direct inspection of the codebase in `d:\dev\CookCopilot`
+**Last updated:** 2026-09-17  
+**Scope:** Based on direct inspection of the codebase in `d:\dev\LarderMind`
 
 ---
 
 ## 1. Project Overview
 
-**LarderMind** is a full-stack meal-planning application. It helps users:
+**LarderMind** is a meal-planning application (pantry, recipes, meal plan, shopping list, AI cooking help).
 
-- Track pantry inventory (quantities, units, ingredients)
-- Manage recipes with folders, images, and ingredient lists
-- Plan meals on a calendar
-- Maintain a shopping list that syncs with pantry when items are checked off
-- Get AI-assisted cooking help that can list recipes, create recipes, add items to the shopping list, and add/remove recipes from the meal plan
+**Git (three remotes):**
 
-**Branding:** All surfaces use **LarderMind**. Web and landing use the Warm Kitchen design system; mobile still uses orange styling (visual alignment pending).
+| Remote | Path | Role |
+|--------|------|------|
+| `lardermind-backend` | repo root | `docs/`, `tasks/`, workflow, **`backend-cf/`** (Workers + D1) |
+| `lardermind-frontend` | `frontend/` | React + Vite web |
+| `lardermind-mobile` | `mobile/` | Expo mobile |
 
-The project consists of **four surfaces** sharing one backend:
+**Removed:** Nest `backend-node/`, static `landing/`. API path is Cloudflare Workers only.
 
-| Surface | Path | Role |
-|---------|------|------|
-| Backend API | `backend/` | Spring Boot REST API, PostgreSQL, AI chat |
-| Web app | `frontend/client/` | React + Vite SPA |
-| Mobile app | `mobile/` | React Native + Expo |
-| Landing page | `landing/` | Static marketing/waitlist page |
+**Branding:** **LarderMind** / Warm Kitchen on web; mobile visual alignment still pending.
 
-There is **no root monorepo config** — each subproject is largely self-contained. CI workflows live under `frontend/.github/workflows/`.
+> Older sections below may still mention Spring/Nest/landing — treat root README + this overview as current until those sections are scrubbed.
 
 ---
 

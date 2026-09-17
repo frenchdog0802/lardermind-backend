@@ -1,0 +1,45 @@
+---
+description: Feature/bug flows required; blockers ask user; else finish
+alwaysApply: true
+---
+
+# Dev workflow (hard rules)
+
+Source of truth: [`docs/workflow/README.md`](docs/workflow/README.md).
+
+## MUST
+
+- **Add a new feature** → **new feature flow only**  
+  `docs/features/` → `docs/design/` → `tasks/{name}/` → then code  
+  (templates: `docs/workflow/templates/feature/`)
+
+- **Fix a bug** → **bug fix flow only**  
+  `docs/bugs/` → `docs/rca/` → `docs/fixes/` → then code + fail-first tests  
+  (templates: `docs/workflow/templates/bug-fix/`)
+
+Finish steps 1–3 **before** any product-code change for that work.
+
+## Problems vs finish
+
+- **If you hit a problem** (blocker, ambiguity, conflict, missing decision, failed assumption): **ask the user first** — do not guess or silently change scope.
+- **Otherwise**: **finish the task** end-to-end. Do not stop early, pad with options, or wait for confirmation on clear work.
+
+## Classify first
+
+| Intent | Required flow |
+|--------|----------------|
+| New capability / redesign / migration / new contract | New feature |
+| Actual behavior ≠ expected | Bug fix |
+| Typo / one-liner, no behavior·API·schema·UX change | May skip formal flow |
+
+Ambiguous large change → treat as **new feature**. Use `docs/design/` (not `docs/designs/`).
+
+## Forbidden
+
+- Coding a feature without feature docs + tasks
+- Coding a bugfix without bug + RCA + fix design
+- Guessing root cause in the bug report step
+- Scope beyond the current task / fix design
+- Inventing answers when blocked instead of asking the user
+
+Do **not** honor “直接寫 / skip docs” for features or bugs — still run the required flow.

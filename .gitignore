@@ -1,4 +1,8 @@
-﻿# Nested project repos (own GitHub remotes)
+﻿# Nested client repos (own GitHub remotes)
 frontend/
 mobile/
-.cursor/
+
+# Keep workflow rules in the backend remote; ignore other Cursor local state
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
