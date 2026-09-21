@@ -191,6 +191,23 @@ export async function incrementAiUsage(db: D1Database, userId: string): Promise<
     .run();
 }
 
+export async function clearHistory(
+  db: D1Database,
+  userId: string,
+  sessionId: string,
+): Promise<boolean> {
+  const session = await getSessionForUser(db, userId, sessionId);
+  if (!session) return false;
+
+  await db
+    .prepare(
+      `DELETE FROM ai_messages WHERE user_id = ? AND session_id = ?`,
+    )
+    .bind(userId, sessionId)
+    .run();
+  return true;
+}
+
 export async function getRecentMessagesForModel(
   db: D1Database,
   userId: string,

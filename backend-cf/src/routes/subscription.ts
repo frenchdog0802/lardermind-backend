@@ -59,12 +59,13 @@ subscriptionRoutes.get('/api/subscription/plans', (c) =>
 subscriptionRoutes.get('/api/subscription/status', requireAuth, async (c) => {
   const userId = c.get('userId');
   const quota = await c.env.DB.prepare(
-    'SELECT ai_message_sent FROM usage_quotas WHERE user_id = ?',
+    'SELECT ai_message_sent, image_uploads FROM usage_quotas WHERE user_id = ?',
   )
     .bind(userId)
-    .first<{ ai_message_sent: number }>();
+    .first<{ ai_message_sent: number; image_uploads: number }>();
 
   const aiUsed = quota?.ai_message_sent ?? 0;
+  const imageUsed = quota?.image_uploads ?? 0;
 
   return c.json(
     ok({
@@ -77,7 +78,7 @@ subscriptionRoutes.get('/api/subscription/status', requireAuth, async (c) => {
         recipeImportsLimit: FREE_TIER.recipeImportsPerMonth,
         recipeCount: 0,
         recipeLimit: FREE_TIER.maxRecipes,
-        imageUploadsUsed: 0,
+        imageUploadsUsed: imageUsed,
         imageUploadsLimit: FREE_TIER.imageUploadsPerMonth,
       },
     }),

@@ -19,8 +19,16 @@ bucket_name = "lardermind-media"
 
 [vars]
 CORS_ALLOWED_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173,https://lardermind.com,https://lardermind-web.pages.dev"
-AI_MODEL = "@cf/meta/llama-3.1-8b-instruct"
+CF_ACCOUNT_ID = "07f4b1329f917e76a16c08d7cd00789d"
+AI_GATEWAY_ID = "default"
+LLM_MODEL = "deepseek-chat"
+OPENAI_VISION_MODEL = "gpt-4o"
+OPENAI_VISION_TIMEOUT_MS = "60000"
 JWT_EXPIRES_IN_SECONDS = "2592000"
+FRONTEND_URL = "https://lardermind.com"
+GOOGLE_CLIENT_ID = "603047692060-llk1cjf1b0f5bpdb9it5cvogk2b8haio.apps.googleusercontent.com"
 
-# Secrets (wrangler secret put):
-#   JWT_SECRET — min 32 chars, same as Nest if you want shared tokens during cutover tests
+# Secrets (wrangler secret put / .dev.vars):
+#   JWT_SECRET — min 32 chars
+#   DEEPSEEK_API_KEY — chat via AI Gateway
+#   OPENAI_API_KEY — pantry vision via AI Gateway

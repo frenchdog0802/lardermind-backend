@@ -22,6 +22,7 @@ API is **Cloudflare Workers** only (`backend-cf/`). Nest / `backend-node` and th
 |-----------------|-----------|
 | Dev workflow (feature / bug) | [docs/workflow/README.md](./docs/workflow/README.md) · [AGENTS.md](./AGENTS.md) |
 | Cloudflare API | [backend-cf/README.md](./backend-cf/README.md) · [docs/features/backend-cf-api.md](./docs/features/backend-cf-api.md) |
+| Cloudflare Pages (web) | [docs/features/frontend-cf-pages.md](./docs/features/frontend-cf-pages.md) · CI in **lardermind-frontend** |
 | Project status | [PROJECT_STATUS.md](./PROJECT_STATUS.md) |
 | Store launch checklist | [docs/store-launch-todo.md](./docs/store-launch-todo.md) |
 

@@ -72,7 +72,8 @@ Tables in `migrations/0001_init.sql`:
 
 - `users`, `usage_quotas`
 - `chat_sessions`, `ai_messages`
-- `user_preferences`, `pantry_items` (schema only; CRUD later)
+- `user_preferences` (schema only; CRUD later)
+- `pantry_items` (+ `ingredient_id`) — CRUD via `/api/pantry-item*` (see `backend-cf-pantry-crud`)
 
 UUIDs as `TEXT`; timestamps as Unix seconds `INTEGER`.
 
@@ -84,7 +85,7 @@ UUIDs as `TEXT`; timestamps as Unix seconds `INTEGER`.
 |------|-------|----------|
 | `JWT_SECRET` | secret | Yes (≥32 chars) |
 | `CORS_ALLOWED_ORIGINS` | wrangler var | Yes |
-| `AI_MODEL` | wrangler var | Yes (default `@cf/meta/llama-3.1-8b-instruct`) |
+| `AI_MODEL` | wrangler var | Yes (default `@cf/meta/llama-3.1-8b-instruct-fast`) |
 | `JWT_EXPIRES_IN_SECONDS` | wrangler var | Yes |
 | `GOOGLE_CLIENT_ID` | secret/var | No (v1) |
 

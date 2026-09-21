@@ -14,7 +14,8 @@ Parallel backend for the CF stack. **Does not replace** Nest until you switch cl
 | HTTP | Hono on Workers |
 | DB | D1 (SQLite) |
 | Media | R2 (`lardermind-media`) |
-| AI chat | Workers AI (streaming SSE) |
+| AI chat | DeepSeek via Cloudflare AI Gateway (SSE) |
+| Vision | OpenAI gpt-4o via AI Gateway (`/api/pantry-vision/*`) |
 | Auth | JWT HS256 (Nest-compatible payload) |
 
 ## Local dev
@@ -31,7 +32,7 @@ npm run dev
 
 Default: `http://127.0.0.1:8787`
 
-`npm run dev` uses `--local` (no Cloudflare login; **Workers AI chat needs** `npm run dev:remote` after `wrangler login`). Local R2 is simulated automatically — no separate bucket create for `wrangler dev --local`.
+`npm run dev` uses `--local` (no Cloudflare login required for D1/R2 simulation). Chat and vision call **AI Gateway over the public internet**, so they work with local `wrangler dev` once `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` are set in `.dev.vars`.
 
 Point web (optional):
 
@@ -62,9 +63,13 @@ Binding is already in `wrangler.toml` (`binding = "R2"`, `bucket_name = "larderm
 
 ```powershell
 npx wrangler secret put JWT_SECRET
+npx wrangler secret put DEEPSEEK_API_KEY
+npx wrangler secret put OPENAI_API_KEY
 npm run db:migrate:remote
 npm run deploy
 ```
+
+Confirm `CF_ACCOUNT_ID` / `AI_GATEWAY_ID` in `wrangler.toml` match the Cloudflare account and AI Gateway (default gateway id is usually `default`).
 
 4. Worker URL: `https://lardermind-api.<subdomain>.workers.dev`
 
@@ -119,19 +124,41 @@ Feature: [docs/features/frontend-cf-pages.md](../docs/features/frontend-cf-pages
 | `GET /api/health` | Done |
 | `POST /api/auth/signup`, `signin` | Done |
 | `GET /api/auth/signout` | Done |
-| `POST /api/chat/stream` | Done (Workers AI, no tools) |
+| `POST /api/auth/google-login` | Done (JSON `{ token }` = Google ID token) |
+| `POST /api/auth/google-callback` | Done (form `credential` → 302 `#google_auth=`) |
+| `POST /api/chat/stream` | Done (DeepSeek via AI Gateway, no tools) |
 | Chat sessions / history | Done |
 | `GET /api/subscription/plans`, `status` | Stub |
 | `POST /api/upload/image` | Done (JWT, multipart field `file`, max 8 MB) |
 | `DELETE /api/upload/image/:publicId` | Done (JWT; `publicId` = `{userId}/{uuid}.ext`) |
 | `GET /api/media/:userId/:objectName` | Done (public; streams from R2) |
-| Pantry, recipes, Google OAuth | Not yet |
+| `GET/POST/PUT/DELETE /api/pantry-item` (+ `/bulk`) | Done (JWT; D1 `pantry_items`) |
+| `POST /api/pantry-vision/recognize` | Done (OpenAI via AI Gateway; multipart `image`) |
+| `POST /api/pantry-vision/apply` | Done (JWT; merge-add pantry) |
+| `GET/PUT /api/user-preferences` | Done |
+| `GET/POST/PUT/DELETE /api/shopping-list` | Done |
+| `GET/POST/PUT/DELETE /api/folder` | Done |
+| `GET/POST/PUT/DELETE /api/ingredient` | Done |
+| `GET/POST/PUT/DELETE /api/recipe` | Done |
+| `GET/POST/PUT/DELETE /api/meal-plan` (+ confirm/skip/pending-confirm) | Done |
+| `DELETE /api/chat/history`, `GET /api/chat/actions` | Done (actions stub empty) |
+| Upload field `image` alias + dual response keys | Done |
+| Stripe checkout / IAP validate-sync / chat HITL resume | Not yet (deferred) |
+
+### Google login notes
+
+- Web GIS redirect posts to `{API}/api/auth/google-callback`; Worker verifies ID token (`aud` = `GOOGLE_CLIENT_ID`) then redirects to `FRONTEND_URL/#google_auth=<base64url>`.
+- Worker vars (see `wrangler.toml`): `GOOGLE_CLIENT_ID`, `FRONTEND_URL` (no trailing slash; prod `https://lardermind.com`).
+- Frontend: set `VITE_GOOGLE_CLIENT_ID` to the **same** Web Client ID; prod `VITE_API_BASE_URL=https://api.lardermind.com`.
+- Google Console redirect URI: `https://api.lardermind.com/api/auth/google-callback` (plus local `http://127.0.0.1:8787/api/auth/google-callback`).
+- Local redirect testing: put `FRONTEND_URL=http://localhost:5173` in `backend-cf/.dev.vars` so callback returns to Vite.
 
 ### Image upload notes
 
 - Allowed MIME: `image/jpeg`, `image/png`, `image/webp`, `image/gif`
 - Free quota: **10 uploads / UTC calendar month** (`usage_quotas.image_uploads`); admin role unlimited
-- Success envelope: `{ success, message, data: { imageUrl, publicId } }`
+- Success envelope: `{ success, message, data: { imageUrl, publicId, image_url, public_id } }`
+- Multipart field: `file` or `image`
 - `imageUrl` is `{origin}/api/media/{userId}/{uuid}.ext` (same API host)
 
 ## Smoke test

@@ -4,6 +4,7 @@ import type { Env } from '../env';
 import type { AuthVariables } from '../middleware/auth';
 import { requireAuth } from '../middleware/auth';
 import {
+  clearHistory,
   createSession,
   deleteSession,
   getSessionForUser,
@@ -68,7 +69,27 @@ chatRoutes.get('/api/chat/history', async (c) => {
   const session = await getSessionForUser(c.env.DB, userId, sessionId);
   if (!session) return c.json(fail('Session not found'), 404);
   const messages = await listHistory(c.env.DB, userId, sessionId);
-  return c.json(ok({ messages }));
+  return c.json(ok({ sessionId, messages }));
+});
+
+chatRoutes.delete('/api/chat/history', async (c) => {
+  const userId = c.get('userId');
+  const sessionId = c.req.query('sessionId');
+  if (!sessionId) {
+    return c.json(fail('sessionId is required'), 400);
+  }
+  const cleared = await clearHistory(c.env.DB, userId, sessionId);
+  if (!cleared) return c.json(fail('Session not found'), 404);
+  return c.json(ok({ cleared: true }));
+});
+
+chatRoutes.get('/api/chat/actions', async (c) => {
+  return c.json(
+    ok({
+      actions: [],
+      description: 'Tool actions not available on CF API v1',
+    }),
+  );
 });
 
 chatRoutes.post('/api/chat/stream', async (c) => {

@@ -4,6 +4,12 @@ import {
   incrementAiUsage,
   insertMessage,
 } from '../db/chat';
+import {
+  aiGatewayChatCompletionsUrl,
+  resolveAiGatewayConfig,
+  resolveLlmModel,
+} from '../lib/ai-gateway';
+import { iterateOpenAiCompatStream } from '../lib/openai-compat';
 import { formatSseEvent, sseResponse } from '../lib/sse';
 import { COOKING_ASSISTANT_SYSTEM_PROMPT } from './system-prompt';
 
@@ -12,18 +18,6 @@ type StreamChatInput = {
   sessionId: string;
   message: string;
 };
-
-function extractTokenText(chunk: string): string {
-  if (!chunk) return '';
-  try {
-    const parsed = JSON.parse(chunk) as { response?: string; content?: string };
-    if (typeof parsed.response === 'string') return parsed.response;
-    if (typeof parsed.content === 'string') return parsed.content;
-  } catch {
-    // Workers AI may stream raw text.
-  }
-  return chunk;
-}
 
 export function streamCookingChat(env: Env, input: StreamChatInput): Response {
   const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
@@ -59,28 +53,49 @@ export function streamCookingChat(env: Env, input: StreamChatInput): Response {
         JSON.stringify({ message: 'Thinking about your meal…' }),
       );
 
-      const model = env.AI_MODEL || '@cf/meta/llama-3.1-8b-instruct';
-      const aiStream = await env.AI.run(model, {
-        messages,
-        stream: true,
+      const gateway = resolveAiGatewayConfig(env);
+      const apiKey = (env.DEEPSEEK_API_KEY || '').trim();
+      if (!gateway || !apiKey) {
+        await writeEvent(
+          'error',
+          JSON.stringify({ message: 'Chat is not configured' }),
+        );
+        return;
+      }
+
+      const model = resolveLlmModel(env);
+      const url = aiGatewayChatCompletionsUrl(gateway, 'deepseek');
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          stream: true,
+        }),
       });
 
-      let fullText = '';
-      const reader = aiStream.getReader();
-      const decoder = new TextDecoder();
+      if (!response.ok || !response.body) {
+        await writeEvent(
+          'error',
+          JSON.stringify({ message: 'Chat provider request failed' }),
+        );
+        return;
+      }
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        const token = extractTokenText(chunk);
+      let fullText = '';
+      for await (const token of iterateOpenAiCompatStream(response.body)) {
         if (!token) continue;
         fullText += token;
         await writeEvent('token', JSON.stringify(token));
       }
 
       const assistantText =
-        fullText.trim() || 'Sorry, I could not generate a reply. Please try again.';
+        fullText.trim() ||
+        'Sorry, I could not generate a reply. Please try again.';
 
       await insertMessage(env.DB, {
         userId: input.userId,
