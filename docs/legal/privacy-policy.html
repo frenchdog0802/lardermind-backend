@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy Policy / 隱私權政策 — LarderMind</title>
+  <meta name="description" content="LarderMind Privacy Policy / 隱私權政策" />
+  <style>
+    :root {
+      --bg: #f7f4ef;
+      --ink: #1c1917;
+      --muted: #57534e;
+      --line: #d6d3d1;
+      --accent: #0f766e;
+      --card: #fffcf7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Songti TC", "Noto Serif TC", Georgia, serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #e7f0ea 0%, transparent 55%),
+        radial-gradient(900px 400px at 100% 0%, #efe6d8 0%, transparent 50%),
+        var(--bg);
+      line-height: 1.7;
+    }
+    .wrap { max-width: 820px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+    header {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 1.5rem;
+      margin-bottom: 1.75rem;
+    }
+    .brand {
+      font-size: 0.85rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 700;
+      margin: 0 0 0.5rem;
+    }
+    h1 { font-size: clamp(1.8rem, 4vw, 2.4rem); line-height: 1.2; margin: 0 0 0.75rem; }
+    .meta { color: var(--muted); font-size: 0.95rem; margin: 0; }
+    .lang-switch {
+      display: flex; gap: 0.75rem; flex-wrap: wrap;
+      margin: 1.25rem 0 0; font-family: system-ui, sans-serif; font-size: 0.9rem;
+    }
+    .lang-switch a {
+      color: var(--accent); text-decoration: none;
+      border: 1px solid var(--line); background: var(--card);
+      padding: 0.35rem 0.7rem; border-radius: 6px;
+    }
+    .lang-switch a:hover { border-color: var(--accent); }
+    nav.toc {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      margin: 1.5rem 0 2rem;
+      font-family: system-ui, sans-serif;
+      font-size: 0.92rem;
+    }
+    nav.toc strong { display: block; margin-bottom: 0.5rem; }
+    nav.toc ol { margin: 0; padding-left: 1.2rem; }
+    nav.toc a { color: var(--ink); text-decoration: none; }
+    nav.toc a:hover { color: var(--accent); text-decoration: underline; }
+    section { margin-bottom: 2rem; scroll-margin-top: 1rem; }
+    h2 {
+      font-size: 1.35rem;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 0.35rem;
+      margin: 0 0 0.9rem;
+    }
+    h3 { font-size: 1.05rem; margin: 1.2rem 0 0.4rem; }
+    p, li { font-size: 1rem; }
+    ul { padding-left: 1.25rem; }
+    .divider {
+      margin: 3rem 0;
+      border: 0;
+      border-top: 2px solid var(--line);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: system-ui, sans-serif;
+      font-size: 0.88rem;
+      background: var(--card);
+      margin: 1rem 0;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 0.55rem 0.65rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #efeae2; }
+    .note {
+      font-family: system-ui, sans-serif;
+      font-size: 0.9rem;
+      color: var(--muted);
+      background: var(--card);
+      border-left: 3px solid var(--accent);
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+    }
+    footer {
+      margin-top: 2.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.9rem;
+      font-family: system-ui, sans-serif;
+    }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <p class="brand">LarderMind</p>
+      <h1>隱私權政策 / Privacy Policy</h1>
+      <p class="meta">最後更新日期 / Last updated: <strong>2026-09-22</strong></p>
+      <p class="meta">開發者 / Developer: <strong>Bert</strong> · 聯絡 / Contact: <a href="mailto:support@lardermind.com">support@lardermind.com</a></p>
+      <div class="lang-switch">
+        <a href="#zh">繁體中文</a>
+        <a href="#en">English</a>
+        <a href="#data-safety">Play Data Safety 對照</a>
+      </div>
+    </header>
+
+    <!-- ========== 繁體中文 ========== -->
+    <div id="zh">
+      <nav class="toc" aria-label="目錄（繁體中文）">
+        <strong>目錄</strong>
+        <ol>
+          <li><a href="#zh-1">簡介</a></li>
+          <li><a href="#zh-2">我們蒐集哪些資料</a></li>
+          <li><a href="#zh-3">蒐集目的與使用方式</a></li>
+          <li><a href="#zh-4">第三方服務與資料分享</a></li>
+          <li><a href="#zh-5">Cookie 與追蹤技術</a></li>
+          <li><a href="#zh-6">資料保存與刪除</a></li>
+          <li><a href="#zh-7">您的權利</a></li>
+          <li><a href="#zh-8">資料安全</a></li>
+          <li><a href="#zh-9">兒童隱私</a></li>
+          <li><a href="#zh-10">國際傳輸</a></li>
+          <li><a href="#zh-11">政策更新</a></li>
+          <li><a href="#zh-12">聯絡我們</a></li>
+        </ol>
+      </nav>
+
+      <section id="zh-1">
+        <h2>1. 簡介</h2>
+        <p>歡迎使用 <strong>LarderMind</strong>（下稱「本服務」「本 App」）。本服務由個人開發者 <strong>Bert</strong>（下稱「我們」）提供，包含 Android 應用程式與網站（例如 <a href="https://lardermind.com">lardermind.com</a>）。</p>
+        <p>LarderMind 是一套餐計畫與廚房管理工具，協助您管理食品庫存、食譜、購物清單、餐計畫，並透過 AI 烹飪助理取得建議。</p>
+        <p>本隱私權政策說明我們如何蒐集、使用、儲存、分享與保護您的個人資料。使用本服務即表示您已閱讀並瞭解本政策。本政策依據加拿大《個人資訊保護與電子文件法》（PIPEDA）及適用之省級隱私法規撰寫，並對照 Google Play 資料安全揭露要求。</p>
+      </section>
+
+      <section id="zh-2">
+        <h2>2. 我們蒐集哪些資料</h2>
+        <h3>2.1 您提供的資料</h3>
+        <ul>
+          <li><strong>帳號資料：</strong>姓名（或顯示名稱）、電子郵件、密碼（以加鹽雜湊儲存，我們無法還原明文密碼）。</li>
+          <li><strong>Google 登入：</strong>若您使用 Google 登入，我們可能取得您的 Google 帳號電子郵件、姓名、Google 使用者識別碼，以及（若提供）個人頭像網址。</li>
+          <li><strong>偏好與飲食相關資料：</strong>例如過敏原、不喜歡／喜歡的食材、飲食限制、家庭備註、計量單位等（由您自行填寫）。</li>
+          <li><strong>使用者內容：</strong>食品庫存項目、食譜、購物清單、餐計畫、與 AI 助理的對話內容。</li>
+          <li><strong>圖片：</strong>您拍攝或從相簿選取的食品／食譜相關圖片（例如用於庫存辨識或食譜封面）。</li>
+        </ul>
+        <h3>2.2 我們目前不蒐集的資料</h3>
+        <ul>
+          <li>電話號碼</li>
+          <li>精確或概略地理位置（GPS）</li>
+          <li>通訊錄／聯絡人</li>
+          <li>廣告識別碼（Advertising ID／IDFA）用於廣告投放</li>
+          <li>用於行銷分析之行為追蹤 SDK 資料（例如 Firebase Analytics、Google Analytics）</li>
+        </ul>
+        <h3>2.3 自動產生的技術資料</h3>
+        <p>為提供與維運服務，伺服器或基礎設施可能處理必要的連線紀錄（例如 IP 位址、請求時間、錯誤日誌）。我們不使用這些資料投放個人化廣告。</p>
+      </section>
+
+      <section id="zh-3">
+        <h2>3. 蒐集目的與使用方式</h2>
+        <ul>
+          <li>建立與管理您的帳號、驗證身分（含 Google 登入）</li>
+          <li>提供食品庫存、食譜、購物清單、餐計畫等核心功能</li>
+          <li>透過 AI 處理您的訊息與（在您使用時）食品圖片，以提供辨識結果或烹飪建議</li>
+          <li>儲存您上傳的食譜／媒體圖片以便在服務中顯示</li>
+          <li>維護安全、除錯、防止濫用與改善服務穩定性</li>
+          <li>回覆您的客服或隱私權相關請求</li>
+          <li>遵守適用法律義務</li>
+        </ul>
+        <p>我們<strong>不會</strong>出售您的個人資料，也<strong>不會</strong>將您的資料用於第三方廣告投放（本服務目前不投放廣告）。</p>
+      </section>
+
+      <section id="zh-4">
+        <h2>4. 第三方服務與資料分享</h2>
+        <p>為營運本服務，我們會在必要範圍內與下列處理者分享資料（僅限提供服務所需）：</p>
+        <ul>
+          <li><strong>Cloudflare</strong>（Workers、D1、R2、AI Gateway）：託管 API、資料庫與圖片儲存，並作為 AI 請求之閘道。</li>
+          <li><strong>Google</strong>：當您選擇 Google 登入時，身分驗證由 Google 處理；另請參閱 Google 的隱私權政策。</li>
+          <li><strong>DeepSeek</strong>：處理 AI 聊天相關文字內容以產生回覆。</li>
+          <li><strong>OpenAI</strong>：當您使用食品圖片辨識功能時，相關圖片會傳送以進行辨識；依我們目前的設計，該辨識請求處理後<strong>不會</strong>將圖片永久保存在我們的伺服器。</li>
+        </ul>
+        <p>我們可能在法律要求、保護權利與安全，或涉及業務移轉（例如合併、轉讓）時揭露資料；屆時將依適用法律處理。</p>
+      </section>
+
+      <section id="zh-5">
+        <h2>5. Cookie 與追蹤技術</h2>
+        <p>網站可能使用瀏覽器本機儲存（例如 <code>localStorage</code>）保存登入權杖與必要偏好。行動 App 可能使用裝置上的安全儲存／本機儲存保存登入狀態、離線購物清單快取與語言偏好。</p>
+        <p>我們目前<strong>未</strong>使用第三方廣告 Cookie，也<strong>未</strong>整合 Firebase Analytics、Google Analytics 或類似行銷分析 SDK。</p>
+      </section>
+
+      <section id="zh-6">
+        <h2>6. 資料保存與刪除</h2>
+        <ul>
+          <li><strong>保存期限：</strong>在您的帳號存續期間，我們保存提供服務所需的帳號與內容資料。</li>
+          <li><strong>刪除帳號：</strong>請寄信至 <a href="mailto:support@lardermind.com">support@lardermind.com</a> 提出刪除請求（主旨建議註明「Delete my LarderMind account」並提供註冊 Email）。我們將在合理期間內（目標為 <strong>30 天內</strong>）刪除或匿名化您的個人資料，但法律要求或解決爭議所需之紀錄得依法保留。</li>
+          <li>裝置本機快取可由您卸載 App 或清除網站資料移除。</li>
+        </ul>
+      </section>
+
+      <section id="zh-7">
+        <h2>7. 您的權利</h2>
+        <p>依適用之加拿大隱私法，您通常可請求：</p>
+        <ul>
+          <li>查詢我們持有的您的個人資料</li>
+          <li>更正不正確或不完整的資料</li>
+          <li>撤回同意（在適用範圍內）或要求刪除帳號／個人資料</li>
+          <li>瞭解我們如何處理您的資料（本政策）</li>
+        </ul>
+        <p>請以 Email 聯絡 <a href="mailto:support@lardermind.com">support@lardermind.com</a>。我們可能需要驗證您的身分後再處理請求。若您對我們的回覆不滿意，您可向加拿大隱私專員公署（Office of the Privacy Commissioner of Canada）或其他適用監管機關提出申訴。</p>
+      </section>
+
+      <section id="zh-8">
+        <h2>8. 資料安全</h2>
+        <p>我們採取合理的技術與組織措施保護資料，例如：傳輸加密（HTTPS）、密碼加鹽雜湊、存取控制，以及託管於專業雲端基礎設施。惟網際網路傳輸與電子儲存無法保證百分之百安全；請妥善保管您的帳號憑證。</p>
+      </section>
+
+      <section id="zh-9">
+        <h2>9. 兒童隱私</h2>
+        <p>本服務面向一般使用者，<strong>不針對 13 歲以下兒童</strong>設計或行銷。您必須年滿 <strong>13 歲</strong>方可使用本服務。我們不會在知情的情況下蒐集 13 歲以下兒童的個人資料。若您認為我們誤收了此類資料，請立即聯絡我們，我們將儘速刪除。</p>
+      </section>
+
+      <section id="zh-10">
+        <h2>10. 國際傳輸</h2>
+        <p>我們的基礎設施與第三方處理者可能位於加拿大以外地區。使用本服務即表示您瞭解您的資料可能被傳輸至並處理於其他國家／地區；我們將依適用法律與合理保護措施處理此類傳輸。</p>
+      </section>
+
+      <section id="zh-11">
+        <h2>11. 政策更新</h2>
+        <p>我們可能不時更新本政策。更新後將修改頁首「最後更新日期」，並在本頁發布新版本。重大變更時，我們可能透過 App、網站或 Email 另行通知。請定期查閱本頁。</p>
+      </section>
+
+      <section id="zh-12">
+        <h2>12. 聯絡我們</h2>
+        <p>關於本隱私權政策或個人資料請求，請聯絡：</p>
+        <ul>
+          <li>開發者：Bert</li>
+          <li>Email：<a href="mailto:support@lardermind.com">support@lardermind.com</a></li>
+          <li>網站：<a href="https://lardermind.com">https://lardermind.com</a></li>
+        </ul>
+      </section>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- ========== English ========== -->
+    <div id="en">
+      <nav class="toc" aria-label="Table of contents (English)">
+        <strong>Contents</strong>
+        <ol>
+          <li><a href="#en-1">Introduction</a></li>
+          <li><a href="#en-2">Information We Collect</a></li>
+          <li><a href="#en-3">How We Use Information</a></li>
+          <li><a href="#en-4">Third-Party Services &amp; Sharing</a></li>
+          <li><a href="#en-5">Cookies &amp; Tracking</a></li>
+          <li><a href="#en-6">Retention &amp; Deletion</a></li>
+          <li><a href="#en-7">Your Rights</a></li>
+          <li><a href="#en-8">Security</a></li>
+          <li><a href="#en-9">Children’s Privacy</a></li>
+          <li><a href="#en-10">International Transfers</a></li>
+          <li><a href="#en-11">Changes</a></li>
+          <li><a href="#en-12">Contact</a></li>
+        </ol>
+      </nav>
+
+      <section id="en-1">
+        <h2>1. Introduction</h2>
+        <p>Welcome to <strong>LarderMind</strong> (the “Service” or “App”), provided by individual developer <strong>Bert</strong> (“we”, “us”, or “our”). The Service includes the Android application and related websites (such as <a href="https://lardermind.com">lardermind.com</a>).</p>
+        <p>LarderMind is a meal-planning and kitchen tool that helps you manage pantry inventory, recipes, shopping lists, meal plans, and an AI cooking assistant.</p>
+        <p>This Privacy Policy explains how we collect, use, store, share, and protect personal information. By using the Service, you acknowledge this Policy. It is prepared with reference to Canada’s <em>Personal Information Protection and Electronic Documents Act</em> (PIPEDA) and applicable provincial privacy laws, and aligns with Google Play Data Safety disclosure expectations.</p>
+      </section>
+
+      <section id="en-2">
+        <h2>2. Information We Collect</h2>
+        <h3>2.1 Information you provide</h3>
+        <ul>
+          <li><strong>Account data:</strong> name (or display name), email address, and password (stored as a salted hash; we cannot reverse it to plaintext).</li>
+          <li><strong>Google Sign-In:</strong> if you sign in with Google, we may receive your Google account email, name, Google user ID, and (if provided) profile picture URL.</li>
+          <li><strong>Preferences / dietary information:</strong> such as allergies, likes/dislikes, dietary restrictions, household notes, and measurement units (as entered by you).</li>
+          <li><strong>User content:</strong> pantry items, recipes, shopping lists, meal plans, and messages you send to the AI assistant.</li>
+          <li><strong>Images:</strong> photos you capture or select (for example, pantry recognition or recipe images).</li>
+        </ul>
+        <h3>2.2 Information we do not collect (currently)</h3>
+        <ul>
+          <li>Phone numbers</li>
+          <li>Precise or approximate location (GPS)</li>
+          <li>Contacts / address book</li>
+          <li>Advertising IDs used for ads</li>
+          <li>Marketing analytics SDK data (e.g., Firebase Analytics, Google Analytics)</li>
+        </ul>
+        <h3>2.3 Technical data</h3>
+        <p>To operate and maintain the Service, our servers or infrastructure may process necessary connection logs (such as IP address, request time, and error logs). We do not use this data for personalized advertising.</p>
+      </section>
+
+      <section id="en-3">
+        <h2>3. How We Use Information</h2>
+        <ul>
+          <li>Create and manage your account and authenticate you (including Google Sign-In)</li>
+          <li>Provide core features (pantry, recipes, shopping lists, meal plans)</li>
+          <li>Process your messages and (when you use the feature) food images via AI to deliver recognition results or cooking help</li>
+          <li>Store uploaded recipe/media images for display in the Service</li>
+          <li>Maintain security, debug issues, prevent abuse, and improve reliability</li>
+          <li>Respond to support or privacy requests</li>
+          <li>Comply with applicable legal obligations</li>
+        </ul>
+        <p>We do <strong>not</strong> sell your personal information, and we do <strong>not</strong> use your data for third-party advertising (the Service currently does not show ads).</p>
+      </section>
+
+      <section id="en-4">
+        <h2>4. Third-Party Services &amp; Sharing</h2>
+        <p>We share data with the following processors only as needed to provide the Service:</p>
+        <ul>
+          <li><strong>Cloudflare</strong> (Workers, D1, R2, AI Gateway): hosts our API, database, and image storage, and acts as a gateway for AI requests.</li>
+          <li><strong>Google:</strong> when you choose Google Sign-In, authentication is handled by Google; see Google’s privacy policy as well.</li>
+          <li><strong>DeepSeek:</strong> processes AI chat text to generate responses.</li>
+          <li><strong>OpenAI:</strong> when you use pantry image recognition, relevant images are sent for recognition; under our current design, those images are <strong>not</strong> permanently stored on our servers after processing.</li>
+        </ul>
+        <p>We may disclose information if required by law, to protect rights and safety, or in connection with a business transfer (e.g., merger or assignment), subject to applicable law.</p>
+      </section>
+
+      <section id="en-5">
+        <h2>5. Cookies &amp; Tracking</h2>
+        <p>The website may use browser local storage (e.g., <code>localStorage</code>) for auth tokens and necessary preferences. The mobile app may use on-device secure storage / local storage for sign-in state, offline shopping-list cache, and language preference.</p>
+        <p>We currently do <strong>not</strong> use third-party advertising cookies and do <strong>not</strong> integrate Firebase Analytics, Google Analytics, or similar marketing analytics SDKs.</p>
+      </section>
+
+      <section id="en-6">
+        <h2>6. Retention &amp; Deletion</h2>
+        <ul>
+          <li><strong>Retention:</strong> We keep account and content data for as long as your account remains active and needed to provide the Service.</li>
+          <li><strong>Account deletion:</strong> Email <a href="mailto:support@lardermind.com">support@lardermind.com</a> to request deletion (subject line e.g. “Delete my LarderMind account”, include your registered email). We aim to delete or anonymize your personal information within <strong>30 days</strong>, except records we must retain by law or to resolve disputes.</li>
+          <li>On-device caches can be removed by uninstalling the app or clearing site data.</li>
+        </ul>
+      </section>
+
+      <section id="en-7">
+        <h2>7. Your Rights</h2>
+        <p>Under applicable Canadian privacy law, you may typically request to:</p>
+        <ul>
+          <li>Access personal information we hold about you</li>
+          <li>Correct inaccurate or incomplete information</li>
+          <li>Withdraw consent (where applicable) or request deletion of your account / personal information</li>
+          <li>Understand how we handle your information (this Policy)</li>
+        </ul>
+        <p>Contact <a href="mailto:support@lardermind.com">support@lardermind.com</a>. We may need to verify your identity. If you are not satisfied with our response, you may contact the Office of the Privacy Commissioner of Canada or another applicable regulator.</p>
+      </section>
+
+      <section id="en-8">
+        <h2>8. Security</h2>
+        <p>We use reasonable technical and organizational measures, such as HTTPS, salted password hashing, access controls, and reputable cloud infrastructure. No method of transmission or storage is 100% secure; please protect your credentials.</p>
+      </section>
+
+      <section id="en-9">
+        <h2>9. Children’s Privacy</h2>
+        <p>The Service is for a general audience and is <strong>not directed to children under 13</strong>. You must be at least <strong>13 years old</strong> to use the Service. We do not knowingly collect personal information from children under 13. If you believe we have done so, contact us and we will delete it promptly.</p>
+      </section>
+
+      <section id="en-10">
+        <h2>10. International Transfers</h2>
+        <p>Our infrastructure and processors may be located outside Canada. By using the Service, you understand that your information may be transferred to and processed in other countries/regions, subject to applicable law and reasonable safeguards.</p>
+      </section>
+
+      <section id="en-11">
+        <h2>11. Changes to This Policy</h2>
+        <p>We may update this Policy from time to time. We will revise the “Last updated” date and post the new version on this page. For material changes, we may also notify you via the App, website, or email. Please review this page periodically.</p>
+      </section>
+
+      <section id="en-12">
+        <h2>12. Contact Us</h2>
+        <ul>
+          <li>Developer: Bert</li>
+          <li>Email: <a href="mailto:support@lardermind.com">support@lardermind.com</a></li>
+          <li>Website: <a href="https://lardermind.com">https://lardermind.com</a></li>
+        </ul>
+      </section>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- Play Data Safety mapping -->
+    <section id="data-safety">
+      <h2>Google Play Data Safety 對照摘要 / Mapping Summary</h2>
+      <p class="note">此表方便你填寫 Play Console「資料安全」表單。實際勾選時請以<strong>目前上架版本真實行為</strong>為準。本版<strong>不含</strong>訂閱／IAP（尚未正式上線）。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Play 資料類型 / Data type</th>
+            <th>是否蒐集 / Collected?</th>
+            <th>說明 / Notes for Console</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>姓名 / Name</td>
+            <td>是 / Yes</td>
+            <td>帳號資料；App 功能必要</td>
+          </tr>
+          <tr>
+            <td>電子郵件 / Email</td>
+            <td>是 / Yes</td>
+            <td>帳號註冊／登入／客服</td>
+          </tr>
+          <tr>
+            <td>使用者 ID / User IDs</td>
+            <td>是 / Yes</td>
+            <td>內部帳號 ID；Google 登入時含 Google user ID</td>
+          </tr>
+          <tr>
+            <td>電話 / Phone</td>
+            <td>否 / No</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>地址／位置 / Location</td>
+            <td>否 / No</td>
+            <td>無精確／概略位置</td>
+          </tr>
+          <tr>
+            <td>照片／影片 / Photos</td>
+            <td>是 / Yes</td>
+            <td>使用者主動選取／拍攝；用於庫存辨識或食譜</td>
+          </tr>
+          <tr>
+            <td>錄音／語音 / Audio</td>
+            <td>否 / No</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>通訊錄 / Contacts</td>
+            <td>否 / No</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>應用程式活動／瀏覽紀錄</td>
+            <td>部分 / Limited</td>
+            <td>使用者內容（庫存、食譜、聊天等）屬 App 功能資料；無獨立行銷 Analytics SDK</td>
+          </tr>
+          <tr>
+            <td>應用程式資訊與效能 / Crash logs</td>
+            <td>否* / No*</td>
+            <td>*目前無 Crashlytics／Sentry；僅可能有伺服器錯誤日誌</td>
+          </tr>
+          <tr>
+            <td>裝置或其他 ID / Device or other IDs</td>
+            <td>否（廣告 ID）/ No (Ad ID)</td>
+            <td>不蒐集 Advertising ID；無廣告 SDK</td>
+          </tr>
+          <tr>
+            <td>財務資訊／購買紀錄</td>
+            <td>否 / No</td>
+            <td>本政策版本：訂閱／IAP 尚未揭露（未正式上線）</td>
+          </tr>
+        </tbody>
+      </table>
+      <table>
+        <thead>
+          <tr>
+            <th>Play 常見問題 / Console question</th>
+            <th>建議填答 / Suggested answer</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>是否蒐集／分享使用者資料？</td>
+            <td>蒐集：是。分享：僅為提供服務之處理者（Cloudflare、Google 登入、DeepSeek、OpenAI），非出售。</td>
+          </tr>
+          <tr>
+            <td>資料是否加密傳輸？</td>
+            <td>是（HTTPS／TLS）</td>
+          </tr>
+          <tr>
+            <td>使用者能否請求刪除資料？</td>
+            <td>是（Email <a href="mailto:support@lardermind.com">support@lardermind.com</a>）</td>
+          </tr>
+          <tr>
+            <td>是否以資料從事廣告？</td>
+            <td>否</td>
+          </tr>
+          <tr>
+            <td>是否出售資料？</td>
+            <td>否</td>
+          </tr>
+          <tr>
+            <td>是否鎖定兒童／專為兒童？</td>
+            <td>否；13+</td>
+          </tr>
+          <tr>
+            <td>隱私權政策網址</td>
+            <td>部署後填入本頁公開 URL（建議：<code>https://lardermind.com/legal/privacy-policy.html</code>）</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <footer>
+      <p>© 2026 Bert · LarderMind · <a href="./terms-of-service.html">服務條款 / Terms of Service</a></p>
+    </footer>
+  </div>
+</body>
+</html>
