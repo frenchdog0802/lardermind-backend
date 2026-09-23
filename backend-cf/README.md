@@ -32,7 +32,9 @@ npm run dev
 
 Default: `http://127.0.0.1:8787`
 
-`npm run dev` uses `--local` (no Cloudflare login required for D1/R2 simulation). Chat and vision call **AI Gateway over the public internet**, so they work with local `wrangler dev` once `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` are set in `.dev.vars`.
+`npm run dev` uses `--local` (no Cloudflare login required for D1/R2 simulation). Chat and vision call **AI Gateway over the public internet**, so they work with local `wrangler dev` once `CF_AIG_TOKEN` / `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` are set in `.dev.vars`.
+
+With **Authenticated Gateway** enabled (recommended), create a token on the gateway Settings page (**AI Gateway Run** permission) and store it as `CF_AIG_TOKEN`. The Worker sends it as `cf-aig-authorization` alongside the provider `Authorization` header.
 
 Point web (optional):
 
@@ -63,13 +65,14 @@ Binding is already in `wrangler.toml` (`binding = "R2"`, `bucket_name = "larderm
 
 ```powershell
 npx wrangler secret put JWT_SECRET
+npx wrangler secret put CF_AIG_TOKEN
 npx wrangler secret put DEEPSEEK_API_KEY
 npx wrangler secret put OPENAI_API_KEY
 npm run db:migrate:remote
 npm run deploy
 ```
 
-Confirm `CF_ACCOUNT_ID` / `AI_GATEWAY_ID` in `wrangler.toml` match the Cloudflare account and AI Gateway (default gateway id is usually `default`).
+Confirm `CF_ACCOUNT_ID` / `AI_GATEWAY_ID` in `wrangler.toml` match the Cloudflare account and AI Gateway (default gateway id is usually `default`). Keep Authenticated Gateway **on** and use `CF_AIG_TOKEN` from the gateway Settings page.
 
 4. Worker URL: `https://lardermind-api.<subdomain>.workers.dev`
 

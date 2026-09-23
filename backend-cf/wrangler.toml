@@ -30,5 +30,6 @@ GOOGLE_CLIENT_ID = "603047692060-llk1cjf1b0f5bpdb9it5cvogk2b8haio.apps.googleuse
 
 # Secrets (wrangler secret put / .dev.vars):
 #   JWT_SECRET — min 32 chars
+#   CF_AIG_TOKEN — Authenticated Gateway (cf-aig-authorization)
 #   DEEPSEEK_API_KEY — chat via AI Gateway
 #   OPENAI_API_KEY — pantry vision via AI Gateway

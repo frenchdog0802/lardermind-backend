@@ -6,6 +6,8 @@ import {
 } from '../db/chat';
 import {
   aiGatewayChatCompletionsUrl,
+  aiGatewayRequestHeaders,
+  isAiGatewayAuthenticated,
   resolveAiGatewayConfig,
   resolveLlmModel,
 } from '../lib/ai-gateway';
@@ -55,7 +57,7 @@ export function streamCookingChat(env: Env, input: StreamChatInput): Response {
 
       const gateway = resolveAiGatewayConfig(env);
       const apiKey = (env.DEEPSEEK_API_KEY || '').trim();
-      if (!gateway || !apiKey) {
+      if (!isAiGatewayAuthenticated(env) || !apiKey || !gateway) {
         await writeEvent(
           'error',
           JSON.stringify({ message: 'Chat is not configured' }),
@@ -67,10 +69,7 @@ export function streamCookingChat(env: Env, input: StreamChatInput): Response {
       const url = aiGatewayChatCompletionsUrl(gateway, 'deepseek');
       const response = await fetch(url, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
+        headers: aiGatewayRequestHeaders(env, apiKey),
         body: JSON.stringify({
           model,
           messages,

@@ -1,4 +1,6 @@
 # Copy to .dev.vars for local wrangler dev (never commit .dev.vars)
 JWT_SECRET=change-me-to-at-least-32-characters-long
+# AI Gateway Authenticated Gateway token (cf-aig-authorization)
+CF_AIG_TOKEN=
 DEEPSEEK_API_KEY=
 OPENAI_API_KEY=

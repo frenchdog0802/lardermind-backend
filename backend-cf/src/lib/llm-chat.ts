@@ -1,6 +1,8 @@
 import type { Env } from '../env';
 import {
   aiGatewayChatCompletionsUrl,
+  aiGatewayRequestHeaders,
+  isAiGatewayAuthenticated,
   resolveAiGatewayConfig,
   resolveLlmModel,
 } from './ai-gateway';
@@ -83,7 +85,7 @@ export async function completeChat(input: {
 }): Promise<ChatCompletionResult> {
   const gateway = resolveAiGatewayConfig(input.env);
   const apiKey = (input.env.DEEPSEEK_API_KEY || '').trim();
-  if (!gateway || !apiKey) {
+  if (!isAiGatewayAuthenticated(input.env) || !apiKey || !gateway) {
     throw new Error('Chat is not configured');
   }
 
@@ -100,10 +102,7 @@ export async function completeChat(input: {
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
+    headers: aiGatewayRequestHeaders(input.env, apiKey),
     body: JSON.stringify(body),
   });
 

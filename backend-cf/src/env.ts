@@ -15,6 +15,11 @@ export type Env = {
   CF_ACCOUNT_ID: string;
   /** AI Gateway id (default gateway is usually `default`). */
   AI_GATEWAY_ID: string;
+  /**
+   * Cloudflare AI Gateway auth token for Authenticated Gateway
+   * (`cf-aig-authorization` header). Required when auth is enabled on the gateway.
+   */
+  CF_AIG_TOKEN?: string;
   /** DeepSeek API key (Bearer to AI Gateway deepseek provider). */
   DEEPSEEK_API_KEY?: string;
   /** DeepSeek model id. */

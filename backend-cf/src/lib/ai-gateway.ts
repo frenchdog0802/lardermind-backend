@@ -18,6 +18,35 @@ export function resolveAiGatewayConfig(env: Env): AiGatewayConfig | null {
   return { accountId, gatewayId };
 }
 
+/** Cloudflare Authenticated Gateway token (`cf-aig-authorization`). */
+export function resolveAiGatewayToken(env: Env): string {
+  return (env.CF_AIG_TOKEN || '').trim();
+}
+
+/**
+ * Headers for provider-native AI Gateway requests.
+ * Provider key stays in `Authorization`; Gateway auth uses `cf-aig-authorization`.
+ */
+export function aiGatewayRequestHeaders(
+  env: Env,
+  providerApiKey: string,
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    Authorization: `Bearer ${providerApiKey}`,
+  };
+  const gatewayToken = resolveAiGatewayToken(env);
+  if (gatewayToken) {
+    headers['cf-aig-authorization'] = `Bearer ${gatewayToken}`;
+  }
+  return headers;
+}
+
+/** Account + Authenticated Gateway token required for Gateway calls. */
+export function isAiGatewayAuthenticated(env: Env): boolean {
+  return Boolean(resolveAiGatewayConfig(env) && resolveAiGatewayToken(env));
+}
+
 export function aiGatewayProviderBaseUrl(
   config: AiGatewayConfig,
   provider: 'deepseek' | 'openai',

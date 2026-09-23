@@ -1,6 +1,8 @@
 import type { Env } from '../env';
 import {
   aiGatewayChatCompletionsUrl,
+  aiGatewayRequestHeaders,
+  isAiGatewayAuthenticated,
   resolveAiGatewayConfig,
   resolveVisionModel,
   resolveVisionTimeoutMs,
@@ -42,7 +44,7 @@ export async function recognizePantryFromImage(
 ): Promise<RecognizedPantryDraft[]> {
   const gateway = resolveAiGatewayConfig(env);
   const apiKey = (env.OPENAI_API_KEY || '').trim();
-  if (!gateway || !apiKey) {
+  if (!isAiGatewayAuthenticated(env) || !apiKey || !gateway) {
     throw new VisionNotConfiguredError();
   }
 
@@ -58,10 +60,7 @@ export async function recognizePantryFromImage(
   try {
     response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
+      headers: aiGatewayRequestHeaders(env, apiKey),
       body: JSON.stringify({
         model,
         temperature: 0.2,

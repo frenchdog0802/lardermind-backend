@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   aiGatewayChatCompletionsUrl,
+  aiGatewayRequestHeaders,
   DEFAULT_AI_GATEWAY_ID,
   DEFAULT_LLM_MODEL,
+  isAiGatewayAuthenticated,
   resolveAiGatewayConfig,
+  resolveAiGatewayToken,
   resolveLlmModel,
 } from './ai-gateway';
 import type { Env } from '../env';
@@ -34,5 +37,38 @@ describe('ai-gateway helpers', () => {
     expect(resolveLlmModel(env({ LLM_MODEL: 'deepseek-reasoner' }))).toBe(
       'deepseek-reasoner',
     );
+  });
+
+  it('builds provider + Authenticated Gateway headers', () => {
+    expect(
+      aiGatewayRequestHeaders(env({ CF_AIG_TOKEN: '' }), 'sk-provider'),
+    ).toEqual({
+      'content-type': 'application/json',
+      Authorization: 'Bearer sk-provider',
+    });
+    expect(
+      aiGatewayRequestHeaders(
+        env({ CF_AIG_TOKEN: ' cf-token ' }),
+        'sk-provider',
+      ),
+    ).toEqual({
+      'content-type': 'application/json',
+      Authorization: 'Bearer sk-provider',
+      'cf-aig-authorization': 'Bearer cf-token',
+    });
+  });
+
+  it('requires account id and CF_AIG_TOKEN for authenticated Gateway', () => {
+    expect(
+      isAiGatewayAuthenticated(
+        env({ CF_ACCOUNT_ID: 'acc', CF_AIG_TOKEN: '' }),
+      ),
+    ).toBe(false);
+    expect(
+      isAiGatewayAuthenticated(
+        env({ CF_ACCOUNT_ID: 'acc', CF_AIG_TOKEN: 'tok' }),
+      ),
+    ).toBe(true);
+    expect(resolveAiGatewayToken(env({ CF_AIG_TOKEN: '  x  ' }))).toBe('x');
   });
 });
