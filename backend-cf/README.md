@@ -129,9 +129,15 @@ Feature: [docs/features/frontend-cf-pages.md](../docs/features/frontend-cf-pages
 | `GET /api/auth/signout` | Done |
 | `POST /api/auth/google-login` | Done (JSON `{ token }` = Google ID token) |
 | `POST /api/auth/google-callback` | Done (form `credential` → 302 `#google_auth=`) |
-| `POST /api/chat/stream` | Done (DeepSeek via AI Gateway, no tools) |
+| `POST /api/chat/stream` | Done (DeepSeek + tools + HITL interrupt via AI Gateway) |
 | Chat sessions / history | Done |
-| `GET /api/subscription/plans`, `status` | Stub |
+| `POST /api/chat/send` | Done (same agent loop as stream, JSON) |
+| `POST /api/chat/resume` | Done (HITL approve/reject) |
+| `GET /api/chat/actions` | Done (lists tool names) |
+| `GET /api/subscription/plans`, `status` | Done (entitlement from D1; plans public) |
+| `POST /api/subscription/checkout` | Done (Stripe Checkout Session; trial via code) |
+| `POST /api/subscription/portal` | Done (Customer Portal) |
+| `POST /api/subscription/webhook` | Done (signed + idempotent) |
 | `POST /api/upload/image` | Done (JWT, multipart field `file`, max 8 MB) |
 | `DELETE /api/upload/image/:publicId` | Done (JWT; `publicId` = `{userId}/{uuid}.ext`) |
 | `GET /api/media/:userId/:objectName` | Done (public; streams from R2) |
@@ -144,9 +150,22 @@ Feature: [docs/features/frontend-cf-pages.md](../docs/features/frontend-cf-pages
 | `GET/POST/PUT/DELETE /api/ingredient` | Done |
 | `GET/POST/PUT/DELETE /api/recipe` | Done |
 | `GET/POST/PUT/DELETE /api/meal-plan` (+ confirm/skip/pending-confirm) | Done |
-| `DELETE /api/chat/history`, `GET /api/chat/actions` | Done (actions stub empty) |
+| `DELETE /api/chat/history`, `GET /api/chat/actions` | Done |
 | Upload field `image` alias + dual response keys | Done |
-| Stripe checkout / IAP validate-sync / chat HITL resume | Not yet (deferred) |
+| Stripe checkout / portal / webhook | Done (enable when Stripe env set) |
+| IAP validate-sync | Not yet (deferred; mobile Play Billing) |
+
+### Stripe notes
+
+- Required: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_YEARLY` (+ existing `FRONTEND_URL`).
+- When all are set, `GET /api/subscription/plans` returns `stripeCheckoutEnabled: true`.
+- First-time Checkout sets `subscription_data.trial_period_days = 7` in code (not Dashboard product trial).
+- Webhook URL: `https://api.lardermind.com/api/subscription/webhook` (local: Stripe CLI → `localhost:8787`).
+- Events: `checkout.session.completed`, `customer.subscription.created|updated|deleted`, `invoice.paid`, `invoice.payment_failed`.
+- Customer Portal: enable cancel, payment method update, and both prices for plan switching.
+- Local CLI: `stripe listen --forward-to localhost:8787/api/subscription/webhook` then put the printed `whsec_…` in `.dev.vars`.
+- Entitlement: D1 `subscriptions`; `isPro` for `active` / `trialing` / `past_due`.
+- Free AI: 20 messages / UTC day; Pro: 200. Free images: 10 / UTC month; Pro unlimited.
 
 ### Google login notes
 
@@ -159,10 +178,17 @@ Feature: [docs/features/frontend-cf-pages.md](../docs/features/frontend-cf-pages
 ### Image upload notes
 
 - Allowed MIME: `image/jpeg`, `image/png`, `image/webp`, `image/gif`
-- Free quota: **10 uploads / UTC calendar month** (`usage_quotas.image_uploads`); admin role unlimited
+- Free quota: **10 uploads / UTC calendar month** (`usage_quotas.image_uploads`); Pro / admin unlimited
 - Success envelope: `{ success, message, data: { imageUrl, publicId, image_url, public_id } }`
 - Multipart field: `file` or `image`
 - `imageUrl` is `{origin}/api/media/{userId}/{uuid}.ext` (same API host)
+
+### Chat tools + HITL
+
+- Feature: [docs/features/backend-cf-chat-tools.md](../docs/features/backend-cf-chat-tools.md)
+- Tools: `listPantry`, `listMyRecipes`, `getRecipeDetails`, `listMealPlans`, `getPreferences`, `suggestMealsFromPantry`, plus mutating `addPantryItems`, `addItemsToShoppingList`, `createRecipe`, `addRecipeToMenu`, `updatePreferences` (HITL approve/reject via `POST /api/chat/resume`).
+- SSE events: `status`, `token`, `interrupt` (terminal — no `done`), `done`, `error`.
+- Migration `0005_chat_hitl.sql` adds `locked_at` + `pending_interrupt_json` on `chat_sessions`.
 
 ## Smoke test
 

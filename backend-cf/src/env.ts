@@ -24,8 +24,18 @@ export type Env = {
   DEEPSEEK_API_KEY?: string;
   /** DeepSeek model id. */
   LLM_MODEL?: string;
+  /** Max agent tool rounds per turn (default 8). */
+  CHAT_RECURSION_LIMIT?: string;
   /** OpenAI API key for pantry vision. */
   OPENAI_API_KEY?: string;
   OPENAI_VISION_MODEL?: string;
   OPENAI_VISION_TIMEOUT_MS?: string;
+  /** Stripe secret key (`sk_test_…` / `sk_live_…`). */
+  STRIPE_SECRET_KEY?: string;
+  /** Stripe webhook signing secret (`whsec_…`). */
+  STRIPE_WEBHOOK_SECRET?: string;
+  /** Stripe Price ID for Pro monthly. */
+  STRIPE_PRICE_MONTHLY?: string;
+  /** Stripe Price ID for Pro yearly. */
+  STRIPE_PRICE_YEARLY?: string;
 };

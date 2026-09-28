@@ -4,3 +4,8 @@ JWT_SECRET=change-me-to-at-least-32-characters-long
 CF_AIG_TOKEN=
 DEEPSEEK_API_KEY=
 OPENAI_API_KEY=
+# Stripe (test mode). When all four are set, stripeCheckoutEnabled becomes true.
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRICE_MONTHLY=
+STRIPE_PRICE_YEARLY=

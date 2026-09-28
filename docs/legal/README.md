@@ -8,7 +8,7 @@
 **Last updated in docs:** 2026-09-22
 
 **Developer:** Bert · **Contact:** support@lardermind.com  
-**Governing law:** Canada · **Age:** 13+ · **Subscriptions/IAP:** not disclosed yet
+**Governing law:** Canada · **Age:** 13+ · **Subscriptions:** Web Stripe disclosed · **App IAP:** not live yet
 
 ## Deploy
 

@@ -199,6 +199,7 @@
           <li><strong>Google</strong>：當您選擇 Google 登入時，身分驗證由 Google 處理；另請參閱 Google 的隱私權政策。</li>
           <li><strong>DeepSeek</strong>：處理 AI 聊天相關文字內容以產生回覆。</li>
           <li><strong>OpenAI</strong>：當您使用食品圖片辨識功能時，相關圖片會傳送以進行辨識；依我們目前的設計，該辨識請求處理後<strong>不會</strong>將圖片永久保存在我們的伺服器。</li>
+          <li><strong>Stripe</strong>：當您在網站訂閱 Pro 時，處理付款與訂閱帳單。我們儲存 Stripe 客戶／訂閱識別碼與訂閱狀態，<strong>不</strong>儲存完整信用卡卡號。詳見 <a href="https://stripe.com/privacy" rel="noopener noreferrer">Stripe Privacy Policy</a>。</li>
         </ul>
         <p>我們可能在法律要求、保護權利與安全，或涉及業務移轉（例如合併、轉讓）時揭露資料；屆時將依適用法律處理。</p>
       </section>
@@ -334,6 +335,7 @@
           <li><strong>Google:</strong> when you choose Google Sign-In, authentication is handled by Google; see Google’s privacy policy as well.</li>
           <li><strong>DeepSeek:</strong> processes AI chat text to generate responses.</li>
           <li><strong>OpenAI:</strong> when you use pantry image recognition, relevant images are sent for recognition; under our current design, those images are <strong>not</strong> permanently stored on our servers after processing.</li>
+          <li><strong>Stripe:</strong> when you subscribe to Pro on the website, processes payments and subscription billing. We store Stripe customer/subscription identifiers and status; we do <strong>not</strong> store full card numbers. See the <a href="https://stripe.com/privacy" rel="noopener noreferrer">Stripe Privacy Policy</a>.</li>
         </ul>
         <p>We may disclose information if required by law, to protect rights and safety, or in connection with a business transfer (e.g., merger or assignment), subject to applicable law.</p>
       </section>
@@ -400,7 +402,7 @@
     <!-- Play Data Safety mapping -->
     <section id="data-safety">
       <h2>Google Play Data Safety 對照摘要 / Mapping Summary</h2>
-      <p class="note">此表方便你填寫 Play Console「資料安全」表單。實際勾選時請以<strong>目前上架版本真實行為</strong>為準。本版<strong>不含</strong>訂閱／IAP（尚未正式上線）。</p>
+      <p class="note">此表方便你填寫 Play Console「資料安全」表單。實際勾選時請以<strong>目前上架版本真實行為</strong>為準。網站 Stripe 訂閱已揭露；App 內 IAP／Play Billing 尚未正式上線時，Play 表單仍可不勾購買。</p>
       <table>
         <thead>
           <tr>
@@ -467,8 +469,8 @@
           </tr>
           <tr>
             <td>財務資訊／購買紀錄</td>
-            <td>否 / No</td>
-            <td>本政策版本：訂閱／IAP 尚未揭露（未正式上線）</td>
+            <td>網站：是（經 Stripe）／App IAP：否*</td>
+            <td>網站 Pro 經 Stripe；我們存 customer／subscription id，不存完整卡號。*App Play Billing 尚未正式上線</td>
           </tr>
         </tbody>
       </table>

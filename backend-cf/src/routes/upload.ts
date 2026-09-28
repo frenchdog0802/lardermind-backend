@@ -4,6 +4,7 @@ import type { Env } from '../env';
 import type { AuthVariables } from '../middleware/auth';
 import { requireAuth } from '../middleware/auth';
 import { findUserById } from '../db/users';
+import { resolveEntitlement } from '../db/subscriptions';
 import {
   checkAndIncrementImageUpload,
   QuotaExceededError,
@@ -58,10 +59,12 @@ uploadRoutes.post('/api/upload/image', async (c) => {
     return c.json(fail('User not found'), 401);
   }
 
+  const entitlement = await resolveEntitlement(c.env.DB, userId, user.role);
+
   try {
     await checkAndIncrementImageUpload(c.env.DB, userId, {
-      isAdmin: user.role === 'admin',
-      isPro: false,
+      isAdmin: entitlement.isAdmin,
+      isPro: entitlement.isPro,
     });
   } catch (error) {
     if (error instanceof QuotaExceededError) {

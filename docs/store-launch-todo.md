@@ -143,7 +143,7 @@
 - [ ] Mobile Google 注册完善
 - [ ] Settings 云端持久化
 - [ ] Landing waitlist 接真
-- [ ] Web 订阅 / Stripe Checkout UI（Web 收费再用；App 内仍走商店 IAP）
+- [ ] Web 订阅 / Stripe Checkout UI（实现已接；需填 Stripe env 后验收）
 - [ ] Spring 完全下线、只留 Nest
 - [ ] 更全自动化测试 / CI 重建
 - [ ] iOS / StoreKit / TestFlight
