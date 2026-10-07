@@ -6,6 +6,7 @@ import { requireAuth } from '../middleware/auth';
 import {
   createFolder,
   deleteFolder,
+  ensureDefaultFolders,
   getFolder,
   listFolders,
   toFolderDto,
@@ -62,6 +63,7 @@ function parsePatchInput(
 
 folderRoutes.get('/api/folder', async (c) => {
   const userId = c.get('userId');
+  await ensureDefaultFolders(c.env.DB, userId);
   const rows = await listFolders(c.env.DB, userId, c.req.query('q'));
   return c.json(ok(rows.map(toFolderDto)));
 });

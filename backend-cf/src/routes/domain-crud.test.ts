@@ -701,6 +701,39 @@ describe('domain CRUD routes', () => {
     expect(listBody.data[0].details.quantity).toBe(2);
   });
 
+  it('GET /api/folder ensures default folders including Uncategorized', async () => {
+    const headers = {
+      Authorization: await authHeader(USER_A),
+    };
+
+    const first = await app.request('/api/folder', { headers }, env);
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as {
+      data: Array<{ name: string }>;
+    };
+    const names = firstBody.data.map((f) => f.name);
+    expect(names).toContain('Uncategorized');
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'Uncategorized',
+        'Favorites',
+        'Breakfast',
+        'Lunch',
+        'Dinner',
+      ]),
+    );
+
+    const second = await app.request('/api/folder', { headers }, env);
+    expect(second.status).toBe(200);
+    const secondBody = (await second.json()) as {
+      data: Array<{ name: string }>;
+    };
+    expect(secondBody.data).toHaveLength(firstBody.data.length);
+    expect(
+      secondBody.data.filter((f) => f.name.toLowerCase() === 'uncategorized'),
+    ).toHaveLength(1);
+  });
+
   it('creates a folder', async () => {
     const headers = {
       Authorization: await authHeader(USER_A),

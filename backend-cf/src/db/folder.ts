@@ -22,6 +22,15 @@ export type FolderInput = {
 
 export type FolderPatch = Partial<FolderInput>;
 
+/** Seeded on GET /api/folder so chat-created recipes (null folder_id) are browsable. */
+export const DEFAULT_FOLDER_NAMES = [
+  'Uncategorized',
+  'Favorites',
+  'Breakfast',
+  'Lunch',
+  'Dinner',
+] as const;
+
 export function toFolderDto(row: FolderRow): FolderDto {
   return {
     id: row.id,
@@ -76,6 +85,24 @@ export async function createFolder(
   const row = await getFolder(db, userId, id);
   if (!row) throw new Error('Failed to load created folder');
   return row;
+}
+
+/**
+ * Idempotently create default category folders for a user (case-insensitive name match).
+ */
+export async function ensureDefaultFolders(
+  db: D1Database,
+  userId: string,
+): Promise<FolderRow[]> {
+  const existing = await listFolders(db, userId);
+  const present = new Set(existing.map((f) => f.name.toLowerCase()));
+  for (const name of DEFAULT_FOLDER_NAMES) {
+    if (!present.has(name.toLowerCase())) {
+      await createFolder(db, userId, { name });
+      present.add(name.toLowerCase());
+    }
+  }
+  return listFolders(db, userId);
 }
 
 export async function updateFolder(
