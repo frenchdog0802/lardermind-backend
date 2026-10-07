@@ -1,6 +1,6 @@
 # Checklist
 
-- [ ] 01 Migration + pending helpers
-- [ ] 02 Tools
-- [ ] 03 Loop + routes
-- [ ] 04 Tests + docs
+- [x] 01 Migration + pending helpers
+- [x] 02 Tools
+- [x] 03 Loop + routes
+- [x] 04 Tests + docs

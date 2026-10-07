@@ -82,6 +82,10 @@ export async function completeChat(input: {
   env: Env;
   messages: LlmMessage[];
   tools?: LlmToolDefinition[];
+  /** OpenAI-compatible tool_choice; defaults to auto when tools are present. */
+  toolChoice?: 'auto' | 'required';
+  /** Optional OpenAI-compatible max_tokens (e.g. short auto-title calls). */
+  maxTokens?: number;
 }): Promise<ChatCompletionResult> {
   const gateway = resolveAiGatewayConfig(input.env);
   const apiKey = (input.env.DEEPSEEK_API_KEY || '').trim();
@@ -95,9 +99,12 @@ export async function completeChat(input: {
     messages: input.messages,
     stream: false,
   };
+  if (input.maxTokens != null && Number.isFinite(input.maxTokens) && input.maxTokens > 0) {
+    body.max_tokens = Math.floor(input.maxTokens);
+  }
   if (input.tools?.length) {
     body.tools = input.tools;
-    body.tool_choice = 'auto';
+    body.tool_choice = input.toolChoice ?? 'auto';
   }
 
   const response = await fetch(url, {

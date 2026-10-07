@@ -1,25 +1,22 @@
 import type { Env } from '../env';
-import {
-  getRecentMessagesForModel,
-  incrementAiUsage,
-  insertMessage,
-} from '../db/chat';
-import {
-  aiGatewayChatCompletionsUrl,
-  aiGatewayRequestHeaders,
-  isAiGatewayAuthenticated,
-  resolveAiGatewayConfig,
-  resolveLlmModel,
-} from '../lib/ai-gateway';
-import { iterateOpenAiCompatStream } from '../lib/openai-compat';
 import { formatSseEvent, sseResponse } from '../lib/sse';
-import { COOKING_ASSISTANT_SYSTEM_PROMPT } from './system-prompt';
+import { runAgentTurn } from './agent-loop';
+import { maybeAutoTitleSession } from './auto-title';
 
 type StreamChatInput = {
   userId: string;
   sessionId: string;
   message: string;
 };
+
+function chunkText(text: string, size = 24): string[] {
+  if (!text) return [];
+  const chunks: string[] = [];
+  for (let i = 0; i < text.length; i += size) {
+    chunks.push(text.slice(i, i + size));
+  }
+  return chunks;
+}
 
 export function streamCookingChat(env: Env, input: StreamChatInput): Response {
   const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
@@ -32,84 +29,68 @@ export function streamCookingChat(env: Env, input: StreamChatInput): Response {
 
   void (async () => {
     try {
-      await insertMessage(env.DB, {
-        userId: input.userId,
-        sessionId: input.sessionId,
-        role: 'user',
-        content: input.message,
-      });
-      await incrementAiUsage(env.DB, input.userId);
-
-      const history = await getRecentMessagesForModel(
-        env.DB,
-        input.userId,
-        input.sessionId,
-      );
-      const messages = [
-        { role: 'system' as const, content: COOKING_ASSISTANT_SYSTEM_PROMPT },
-        ...history.map((m) => ({ role: m.role, content: m.content })),
-      ];
-
       await writeEvent(
         'status',
         JSON.stringify({ message: 'Thinking about your meal…' }),
       );
 
-      const gateway = resolveAiGatewayConfig(env);
-      const apiKey = (env.DEEPSEEK_API_KEY || '').trim();
-      if (!isAiGatewayAuthenticated(env) || !apiKey || !gateway) {
-        await writeEvent(
-          'error',
-          JSON.stringify({ message: 'Chat is not configured' }),
-        );
-        return;
-      }
-
-      const model = resolveLlmModel(env);
-      const url = aiGatewayChatCompletionsUrl(gateway, 'deepseek');
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: aiGatewayRequestHeaders(env, apiKey),
-        body: JSON.stringify({
-          model,
-          messages,
-          stream: true,
-        }),
-      });
-
-      if (!response.ok || !response.body) {
-        await writeEvent(
-          'error',
-          JSON.stringify({ message: 'Chat provider request failed' }),
-        );
-        return;
-      }
-
-      let fullText = '';
-      for await (const token of iterateOpenAiCompatStream(response.body)) {
-        if (!token) continue;
-        fullText += token;
-        await writeEvent('token', JSON.stringify(token));
-      }
-
-      const assistantText =
-        fullText.trim() ||
-        'Sorry, I could not generate a reply. Please try again.';
-
-      await insertMessage(env.DB, {
+      const turn = await runAgentTurn(env, {
         userId: input.userId,
         sessionId: input.sessionId,
-        role: 'assistant',
-        content: assistantText,
-        responseType: 'text',
+        message: input.message,
       });
+
+      if (turn.kind === 'busy' || turn.kind === 'error' || turn.kind === 'quota') {
+        await writeEvent(
+          'error',
+          JSON.stringify({ message: turn.message }),
+        );
+        return;
+      }
+
+      try {
+        const titled = await maybeAutoTitleSession({
+          env,
+          db: env.DB,
+          userId: input.userId,
+          sessionId: input.sessionId,
+          userMessage: input.message,
+        });
+        if (titled) {
+          await writeEvent(
+            'session_title',
+            JSON.stringify({
+              sessionId: input.sessionId,
+              title: titled.title,
+            }),
+          );
+        }
+      } catch {
+        // Title failures must not block the chat turn.
+      }
+
+      if (turn.kind === 'interrupt') {
+        await writeEvent(
+          'interrupt',
+          JSON.stringify({
+            type: 'interrupt',
+            message: turn.message,
+            data: turn.data,
+          }),
+        );
+        return;
+      }
+
+      for (const token of chunkText(turn.response.message)) {
+        await writeEvent('token', JSON.stringify(token));
+      }
 
       await writeEvent(
         'done',
         JSON.stringify({
-          type: 'text',
-          message: assistantText,
-          data: {},
+          type: turn.response.type,
+          message: turn.response.message,
+          data: turn.response.data,
         }),
       );
     } catch (error) {

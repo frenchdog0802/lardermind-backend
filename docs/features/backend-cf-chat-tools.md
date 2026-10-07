@@ -1,6 +1,6 @@
 # Feature: Cloudflare chat tools + HITL (`backend-cf/`)
 
-**Status:** In progress  
+**Status:** Done  
 **Scope:** Light tool-calling agent on Workers (no LangGraph) with HITL before mutating tools; `POST /api/chat/resume`; SSE `interrupt`  
 **Out of scope:** Full LangGraph/checkpointer port; URL recipe scrape; organizePantry; Stripe
 
@@ -56,11 +56,11 @@ CF chat today is text-only DeepSeek stream. Clients already support interrupt ba
 
 ## 3. Success criteria
 
-- [ ] Mutating tool → SSE `interrupt` + UI can approve/reject
-- [ ] Approve writes D1 + card-typed response; reject does not write
-- [ ] Read-only tools work without interrupt
-- [ ] Vitest for HITL gate, resume approve/reject, parser tool_calls
-- [ ] README updated
+- [x] Mutating tool → SSE `interrupt` + UI can approve/reject
+- [x] Approve writes D1 + card-typed response; reject does not write
+- [x] Read-only tools work without interrupt
+- [x] Vitest for HITL gate, resume approve/reject, parser tool_calls
+- [x] README updated
 
 ---
 

@@ -1,5 +1,8 @@
 import { nowUnixSeconds } from '../lib/time';
 
+/** Stored default session title; also the auto-title sentinel. */
+export const DEFAULT_CHAT_TITLE = 'New chat';
+
 export type ChatSessionRow = {
   id: string;
   user_id: string;
@@ -7,6 +10,30 @@ export type ChatSessionRow = {
   is_default: number;
   created_at: number | null;
   updated_at: number | null;
+  locked_at?: number | null;
+  pending_interrupt_json?: string | null;
+};
+
+/** Stale lock older than this is treated as free (seconds). */
+export const CHAT_LOCK_STALE_SECONDS = 300;
+
+export type PendingToolSummary = {
+  name: string;
+  argsSummary: string;
+  id?: string;
+};
+
+export type PendingToolCall = {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+};
+
+export type PendingInterrupt = {
+  createdAt: number;
+  pendingTools: PendingToolSummary[];
+  toolCalls: PendingToolCall[];
+  messages: Array<Record<string, unknown>>;
 };
 
 export type AiMessageRow = {
@@ -67,7 +94,7 @@ export async function createSession(
 ): Promise<ChatSessionDto> {
   const id = crypto.randomUUID();
   const now = nowUnixSeconds();
-  const sessionTitle = title?.trim() || 'New chat';
+  const sessionTitle = title?.trim() || DEFAULT_CHAT_TITLE;
   await db
     .prepare(
       `INSERT INTO chat_sessions (id, user_id, title, is_default, created_at, updated_at)
@@ -107,6 +134,26 @@ export async function updateSessionTitle(
     )
     .bind(title.trim(), now, sessionId, userId)
     .run();
+  const row = await getSessionForUser(db, userId, sessionId);
+  return row ? toSessionDto(row) : null;
+}
+
+/** Update title only while it is still the default sentinel (`New chat`). */
+export async function updateSessionTitleIfDefault(
+  db: D1Database,
+  userId: string,
+  sessionId: string,
+  title: string,
+): Promise<ChatSessionDto | null> {
+  const now = nowUnixSeconds();
+  const result = await db
+    .prepare(
+      `UPDATE chat_sessions SET title = ?, updated_at = ?
+       WHERE id = ? AND user_id = ? AND title = ?`,
+    )
+    .bind(title.trim(), now, sessionId, userId, DEFAULT_CHAT_TITLE)
+    .run();
+  if (!result.meta.changes) return null;
   const row = await getSessionForUser(db, userId, sessionId);
   return row ? toSessionDto(row) : null;
 }
@@ -227,4 +274,84 @@ export async function getRecentMessagesForModel(
       role: row.role as 'user' | 'assistant',
       content: row.content,
     }));
+}
+
+export async function tryAcquireSessionLock(
+  db: D1Database,
+  userId: string,
+  sessionId: string,
+  now = nowUnixSeconds(),
+  staleSeconds = CHAT_LOCK_STALE_SECONDS,
+): Promise<boolean> {
+  const staleBefore = now - staleSeconds;
+  const result = await db
+    .prepare(
+      `UPDATE chat_sessions
+       SET locked_at = ?
+       WHERE id = ? AND user_id = ?
+         AND (locked_at IS NULL OR locked_at < ?)`,
+    )
+    .bind(now, sessionId, userId, staleBefore)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function releaseSessionLock(
+  db: D1Database,
+  userId: string,
+  sessionId: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE chat_sessions SET locked_at = NULL WHERE id = ? AND user_id = ?`,
+    )
+    .bind(sessionId, userId)
+    .run();
+}
+
+export async function setPendingInterrupt(
+  db: D1Database,
+  userId: string,
+  sessionId: string,
+  pending: PendingInterrupt,
+): Promise<void> {
+  const now = nowUnixSeconds();
+  await db
+    .prepare(
+      `UPDATE chat_sessions
+       SET pending_interrupt_json = ?, locked_at = ?, updated_at = ?
+       WHERE id = ? AND user_id = ?`,
+    )
+    .bind(JSON.stringify(pending), now, now, sessionId, userId)
+    .run();
+}
+
+export async function getPendingInterrupt(
+  db: D1Database,
+  userId: string,
+  sessionId: string,
+): Promise<PendingInterrupt | null> {
+  const row = await getSessionForUser(db, userId, sessionId);
+  if (!row?.pending_interrupt_json) return null;
+  try {
+    return JSON.parse(row.pending_interrupt_json) as PendingInterrupt;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearPendingInterrupt(
+  db: D1Database,
+  userId: string,
+  sessionId: string,
+): Promise<void> {
+  const now = nowUnixSeconds();
+  await db
+    .prepare(
+      `UPDATE chat_sessions
+       SET pending_interrupt_json = NULL, locked_at = NULL, updated_at = ?
+       WHERE id = ? AND user_id = ?`,
+    )
+    .bind(now, sessionId, userId)
+    .run();
 }
