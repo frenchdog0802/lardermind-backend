@@ -18,3 +18,9 @@ Copies also live under `frontend/public/legal/` so Cloudflare Pages can serve:
 - `https://lardermind.com/legal/terms-of-service.html`
 
 After frontend deploy, paste the privacy URL into Google Play Console → App content → Privacy policy.
+
+## SEO (ops)
+
+- Sitemap: `https://lardermind.com/sitemap.xml` (also linked from `robots.txt`)
+- After web deploy: submit the sitemap in [Google Search Console](https://search.google.com/search-console) for `lardermind.com`
+- Optional later: self-host [OpenSEO](https://github.com/every-app/open-seo) with a DataForSEO API key for keyword/rank research (not required for basic indexing)

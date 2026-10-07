@@ -25,10 +25,8 @@ UI-only in [`frontend/src/components/AICookingAssistant.tsx`](../../frontend/src
 - Keep soft container: `bg-sage/50 border border-line text-herb-deep rounded-2xl px-4 py-3`
 
 ### Timestamp
-- Wrap message row in `group`
-- Visible: `opacity-0 group-hover:opacity-100` (+ `focus-within`)
-- User: `text-white/70` when inside bubble; assistant: `text-muted`
-- Include `<time>` with `dateTime` for a11y; keep formatted string
+- Do not render a clock / `<time>` on message rows
+- Keep `timestamp` on message models for ordering / API hydration only
 
 ### Composer
 - Omit `placeholder` (or empty)
@@ -42,7 +40,6 @@ UI-only in [`frontend/src/components/AICookingAssistant.tsx`](../../frontend/src
 | Risk | Mitigation |
 |------|------------|
 | Assistant prose hard to scan vs bubbles | Keep clear vertical spacing (`space-y-6`–`8`) |
-| Hover-only timestamp on touch | Accept for web; optional always-show later |
 
 ## 4. Non-goals
 
