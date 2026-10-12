@@ -429,6 +429,36 @@ describe('agent loop', () => {
     expect(pendingSaved).toBeTruthy();
   });
 
+  it('injects clientLocalDate into the system prompt', async () => {
+    const { db } = mockDb({});
+    const env = { DB: db } as Env;
+    let systemContent = '';
+
+    const complete: CompleteChatFn = async ({ messages }) => {
+      systemContent = messages.find((m) => m.role === 'system')?.content ?? '';
+      return {
+        content: 'ok',
+        toolCalls: [],
+        rawAssistantMessage: { role: 'assistant', content: 'ok' },
+      };
+    };
+
+    const turn = await runAgentTurn(
+      env,
+      {
+        userId: 'u1',
+        sessionId: 's1',
+        message: 'hello',
+        clientLocalDate: '2026-10-11',
+        chargeQuota: false,
+      },
+      { completeChat: complete },
+    );
+
+    expect(turn.kind).toBe('complete');
+    expect(systemContent).toContain("Today's local calendar date is 2026-10-11");
+  });
+
   it('does not forward hallucinated success when mutation request never yields tools', async () => {
     const { db } = mockDb({});
     const env = { DB: db } as Env;

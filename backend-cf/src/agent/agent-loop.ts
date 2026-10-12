@@ -22,7 +22,10 @@ import {
   type ParsedToolCall,
 } from '../lib/llm-chat';
 import { nowUnixSeconds } from '../lib/time';
-import { COOKING_ASSISTANT_SYSTEM_PROMPT } from './system-prompt';
+import {
+  buildCookingAssistantSystemPrompt,
+  resolveTodayLocalDate,
+} from './system-prompt';
 import { COOKING_TOOLS } from './tools/definitions';
 import { aggregateCard, type ToolCardEvent } from './tools/cards';
 import { executeTool, type ToolExecResult } from './tools/execute';
@@ -305,6 +308,8 @@ export async function runAgentTurn(
     userId: string;
     sessionId: string;
     message: string;
+    /** Client local calendar date YYYY-MM-DD; UTC fallback if missing/invalid. */
+    clientLocalDate?: string;
     /** When false, skip quota increment (not used for resume). */
     chargeQuota?: boolean;
   },
@@ -373,8 +378,12 @@ export async function runAgentTurn(
       input.userId,
       input.sessionId,
     );
+    const todayLocalDate = resolveTodayLocalDate(input.clientLocalDate);
     const messages: LlmMessage[] = [
-      { role: 'system', content: COOKING_ASSISTANT_SYSTEM_PROMPT },
+      {
+        role: 'system',
+        content: buildCookingAssistantSystemPrompt({ todayLocalDate }),
+      },
       ...history.map((m) => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,

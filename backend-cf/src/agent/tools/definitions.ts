@@ -151,7 +151,11 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
             type: 'string',
             enum: ['breakfast', 'lunch', 'dinner', 'snack'],
           },
-          serving_date: { type: 'string', description: 'YYYY-MM-DD' },
+          serving_date: {
+            type: 'string',
+            description:
+              'YYYY-MM-DD. For 今天/today use the local calendar date from the system prompt.',
+          },
         },
         required: ['meal_type', 'serving_date'],
       },

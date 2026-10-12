@@ -20,7 +20,17 @@ import { listToolNames } from '../agent/tools/definitions';
 type ChatSendBody = {
   message?: string;
   sessionId?: string;
+  /** Client local calendar date YYYY-MM-DD for “today” in the agent prompt. */
+  clientLocalDate?: string;
 };
+
+function optionalClientLocalDate(
+  value: unknown,
+): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : undefined;
+}
 
 type ChatResumeBody = {
   sessionId?: string;
@@ -123,6 +133,7 @@ chatRoutes.post('/api/chat/stream', async (c) => {
     userId,
     sessionId,
     message: body.message.trim(),
+    clientLocalDate: optionalClientLocalDate(body.clientLocalDate),
   });
 });
 
@@ -146,6 +157,7 @@ chatRoutes.post('/api/chat/send', async (c) => {
     userId,
     sessionId,
     message: body.message.trim(),
+    clientLocalDate: optionalClientLocalDate(body.clientLocalDate),
   });
 
   if (turn.kind === 'busy') {

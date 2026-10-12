@@ -7,6 +7,7 @@ type StreamChatInput = {
   userId: string;
   sessionId: string;
   message: string;
+  clientLocalDate?: string;
 };
 
 function chunkText(text: string, size = 24): string[] {
@@ -38,6 +39,7 @@ export function streamCookingChat(env: Env, input: StreamChatInput): Response {
         userId: input.userId,
         sessionId: input.sessionId,
         message: input.message,
+        clientLocalDate: input.clientLocalDate,
       });
 
       if (turn.kind === 'busy' || turn.kind === 'error' || turn.kind === 'quota') {
