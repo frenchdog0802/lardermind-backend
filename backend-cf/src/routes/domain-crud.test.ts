@@ -299,36 +299,142 @@ function createMockDb() {
             return { meta: { changes: 1 } };
           }
           if (sql.includes('INSERT INTO shopping_list_items')) {
-            const [
-              id,
-              userId,
-              name,
-              quantity,
-              unit,
-              checked,
-              ingredientId,
-              createdAt,
-              updatedAt,
-            ] = bound as [
-              string,
-              string,
-              string,
-              string,
-              string,
-              number,
-              string | null,
-              number,
-              number,
-            ];
+            const hasSyncFlag = sql.includes('has_been_added_to_pantry');
+            if (hasSyncFlag) {
+              const [
+                id,
+                userId,
+                name,
+                quantity,
+                unit,
+                checked,
+                ingredientId,
+                hasBeenAdded,
+                createdAt,
+                updatedAt,
+              ] = bound as [
+                string,
+                string,
+                string,
+                string,
+                string,
+                number,
+                string | null,
+                number,
+                number,
+                number,
+              ];
+              store.shopping.set(id, {
+                id,
+                user_id: userId,
+                name,
+                quantity,
+                unit,
+                checked,
+                ingredient_id: ingredientId,
+                has_been_added_to_pantry: hasBeenAdded,
+                created_at: createdAt,
+                updated_at: updatedAt,
+              });
+            } else {
+              const [
+                id,
+                userId,
+                name,
+                quantity,
+                unit,
+                checked,
+                ingredientId,
+                createdAt,
+                updatedAt,
+              ] = bound as [
+                string,
+                string,
+                string,
+                string,
+                string,
+                number,
+                string | null,
+                number,
+                number,
+              ];
+              store.shopping.set(id, {
+                id,
+                user_id: userId,
+                name,
+                quantity,
+                unit,
+                checked,
+                ingredient_id: ingredientId,
+                has_been_added_to_pantry: 0,
+                created_at: createdAt,
+                updated_at: updatedAt,
+              });
+            }
+            return { meta: { changes: 1 } };
+          }
+          if (sql.includes('UPDATE shopping_list_items')) {
+            const hasSyncFlag = sql.includes('has_been_added_to_pantry');
+            if (hasSyncFlag) {
+              const [
+                name,
+                quantity,
+                unit,
+                checked,
+                ingredientId,
+                hasBeenAdded,
+                updatedAt,
+                id,
+                userId,
+              ] = bound as [
+                string,
+                string,
+                string,
+                number,
+                string | null,
+                number,
+                number,
+                string,
+                string,
+              ];
+              const row = store.shopping.get(id);
+              if (!row || row.user_id !== userId) {
+                return { meta: { changes: 0 } };
+              }
+              store.shopping.set(id, {
+                ...row,
+                name,
+                quantity,
+                unit,
+                checked,
+                ingredient_id: ingredientId,
+                has_been_added_to_pantry: hasBeenAdded,
+                updated_at: updatedAt,
+              });
+              return { meta: { changes: 1 } };
+            }
+            const [name, quantity, unit, checked, ingredientId, updatedAt, id, userId] =
+              bound as [
+                string,
+                string,
+                string,
+                number,
+                string | null,
+                number,
+                string,
+                string,
+              ];
+            const row = store.shopping.get(id);
+            if (!row || row.user_id !== userId) {
+              return { meta: { changes: 0 } };
+            }
             store.shopping.set(id, {
-              id,
-              user_id: userId,
+              ...row,
               name,
               quantity,
               unit,
               checked,
               ingredient_id: ingredientId,
-              created_at: createdAt,
               updated_at: updatedAt,
             });
             return { meta: { changes: 1 } };
@@ -699,6 +805,112 @@ describe('domain CRUD routes', () => {
     expect(listBody.data[0].name).toBe('Milk');
     expect(listBody.data[0].quantity).toBe(2);
     expect(listBody.data[0].details.quantity).toBe(2);
+  });
+
+  it('checking a shopping item adds quantity to pantry (idempotent; uncheck restores)', async () => {
+    const headers = {
+      Authorization: await authHeader(USER_A),
+      'Content-Type': 'application/json',
+    };
+
+    const create = await app.request(
+      '/api/shopping-list',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: 'Garlic',
+          quantity: 1,
+          unit: 'pack',
+          checked: false,
+        }),
+      },
+      env,
+    );
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as { data: { id: string } };
+
+    const pantryBefore = await app.request('/api/pantry-item', { headers }, env);
+    expect(pantryBefore.status).toBe(200);
+    const pantryBeforeBody = (await pantryBefore.json()) as {
+      data: Array<{ name: string; quantity: number }>;
+    };
+    expect(pantryBeforeBody.data).toHaveLength(0);
+
+    const check = await app.request(`/api/shopping-list/${created.data.id}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ checked: true }),
+    }, env);
+    expect(check.status).toBe(200);
+
+    const pantryAfterCheck = await app.request('/api/pantry-item', { headers }, env);
+    const pantryAfterCheckBody = (await pantryAfterCheck.json()) as {
+      data: Array<{ name: string; quantity: number; unit: string }>;
+    };
+    expect(pantryAfterCheckBody.data).toHaveLength(1);
+    expect(pantryAfterCheckBody.data[0].name).toBe('Garlic');
+    expect(pantryAfterCheckBody.data[0].quantity).toBe(1);
+    expect(pantryAfterCheckBody.data[0].unit).toBe('pack');
+
+    const checkAgain = await app.request(`/api/shopping-list/${created.data.id}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ checked: true }),
+    }, env);
+    expect(checkAgain.status).toBe(200);
+
+    const pantryIdempotent = await app.request('/api/pantry-item', { headers }, env);
+    const pantryIdempotentBody = (await pantryIdempotent.json()) as {
+      data: Array<{ quantity: number }>;
+    };
+    expect(pantryIdempotentBody.data).toHaveLength(1);
+    expect(pantryIdempotentBody.data[0].quantity).toBe(1);
+
+    const uncheck = await app.request(`/api/shopping-list/${created.data.id}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ checked: false }),
+    }, env);
+    expect(uncheck.status).toBe(200);
+
+    const pantryAfterUncheck = await app.request('/api/pantry-item', { headers }, env);
+    const pantryAfterUncheckBody = (await pantryAfterUncheck.json()) as {
+      data: Array<{ quantity: number }>;
+    };
+    expect(pantryAfterUncheckBody.data).toHaveLength(1);
+    expect(pantryAfterUncheckBody.data[0].quantity).toBe(0);
+  });
+
+  it('creating a shopping item already checked adds to pantry once', async () => {
+    const headers = {
+      Authorization: await authHeader(USER_A),
+      'Content-Type': 'application/json',
+    };
+
+    const create = await app.request(
+      '/api/shopping-list',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: 'Onion',
+          quantity: 3,
+          unit: 'pcs',
+          checked: true,
+        }),
+      },
+      env,
+    );
+    expect(create.status).toBe(201);
+
+    const pantry = await app.request('/api/pantry-item', { headers }, env);
+    const pantryBody = (await pantry.json()) as {
+      data: Array<{ name: string; quantity: number }>;
+    };
+    expect(pantryBody.data).toHaveLength(1);
+    expect(pantryBody.data[0].name).toBe('Onion');
+    expect(pantryBody.data[0].quantity).toBe(3);
   });
 
   it('GET /api/folder ensures default folders including Uncategorized', async () => {

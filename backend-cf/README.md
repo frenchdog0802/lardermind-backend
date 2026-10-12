@@ -145,7 +145,7 @@ Feature: [docs/features/frontend-cf-pages.md](../docs/features/frontend-cf-pages
 | `POST /api/pantry-vision/recognize` | Done (OpenAI via AI Gateway; multipart `image`) |
 | `POST /api/pantry-vision/apply` | Done (JWT; merge-add pantry) |
 | `GET/PUT /api/user-preferences` | Done |
-| `GET/POST/PUT/DELETE /api/shopping-list` | Done |
+| `GET/POST/PUT/DELETE /api/shopping-list` | Done (check/uncheck syncs pantry via `has_been_added_to_pantry`) |
 | `GET/POST/PUT/DELETE /api/folder` | Done |
 | `GET/POST/PUT/DELETE /api/ingredient` | Done |
 | `GET/POST/PUT/DELETE /api/recipe` | Done |
