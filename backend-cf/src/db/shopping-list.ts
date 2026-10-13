@@ -25,11 +25,13 @@ export type ShoppingListItemDto = {
   quantity: number;
   unit: string;
   checked: boolean;
+  synced_to_pantry: boolean;
   ingredient_id?: string;
   details: {
     quantity: number;
     unit: string;
     checked: boolean;
+    synced_to_pantry: boolean;
     ingredient_id?: string;
   };
 };
@@ -43,6 +45,33 @@ export type ShoppingListItemInput = {
 };
 
 export type ShoppingListItemPatch = Partial<ShoppingListItemInput>;
+
+export type SyncToPantryItemInput = {
+  id: string;
+  quantity?: number;
+  unit?: string;
+};
+
+export type SyncSkipReason =
+  | 'not_found'
+  | 'already_synced'
+  | 'not_synced'
+  | 'not_checked'
+  | 'invalid_quantity';
+
+export type SyncSkip = { id: string; reason: SyncSkipReason };
+
+export type SyncToPantryResult = {
+  synced: ShoppingListItemDto[];
+  skipped: SyncSkip[];
+};
+
+export type UnsyncFromPantryResult = {
+  unsynced: ShoppingListItemDto[];
+  skipped: SyncSkip[];
+};
+
+const MAX_BATCH = 100;
 
 function quantityFromRow(raw: string | null): number {
   if (raw == null || raw === '') return 0;
@@ -60,10 +89,12 @@ export function toShoppingListItemDto(
   const quantity = quantityFromRow(row.quantity);
   const unit = row.unit ?? 'pcs';
   const checked = row.checked === 1;
+  const synced_to_pantry = flagFromRow(row);
   const details: ShoppingListItemDto['details'] = {
     quantity,
     unit,
     checked,
+    synced_to_pantry,
   };
   if (row.ingredient_id) details.ingredient_id = row.ingredient_id;
 
@@ -73,6 +104,7 @@ export function toShoppingListItemDto(
     quantity,
     unit,
     checked,
+    synced_to_pantry,
     details,
   };
   if (row.ingredient_id) dto.ingredient_id = row.ingredient_id;
@@ -129,6 +161,24 @@ async function syncPantryOnUncheck(
   await updatePantryItem(db, userId, pantry.id, { quantity: newQty });
 }
 
+async function setSyncedFlag(
+  db: D1Database,
+  userId: string,
+  id: string,
+  flag: 0 | 1,
+): Promise<ShoppingListItemRow | null> {
+  const now = nowUnixSeconds();
+  await db
+    .prepare(
+      `UPDATE shopping_list_items
+       SET has_been_added_to_pantry = ?, updated_at = ?
+       WHERE id = ? AND user_id = ?`,
+    )
+    .bind(flag, now, id, userId)
+    .run();
+  return getShoppingListItem(db, userId, id);
+}
+
 export async function listShoppingListItems(
   db: D1Database,
   userId: string,
@@ -168,19 +218,8 @@ export async function createShoppingListItem(
   const id = crypto.randomUUID();
   const now = nowUnixSeconds();
   const checked = input.checked ? 1 : 0;
-  let hasBeenAdded = 0;
-
-  if (checked === 1) {
-    await syncPantryOnCheck(
-      db,
-      userId,
-      input.name,
-      input.quantity,
-      input.unit,
-      input.ingredient_id,
-    );
-    hasBeenAdded = 1;
-  }
+  // Check no longer auto-writes pantry; flag stays 0 until batch sync.
+  const hasBeenAdded = 0;
 
   await db
     .prepare(
@@ -229,28 +268,8 @@ export async function updateShoppingListItem(
       ? (patch.ingredient_id ?? null)
       : existing.ingredient_id;
 
-  let hasBeenAdded = flagFromRow(existing) ? 1 : 0;
-
-  if (checked === 1 && hasBeenAdded === 0) {
-    await syncPantryOnCheck(
-      db,
-      userId,
-      name,
-      quantity,
-      unit,
-      ingredientId,
-    );
-    hasBeenAdded = 1;
-  } else if (checked === 0 && hasBeenAdded === 1) {
-    await syncPantryOnUncheck(
-      db,
-      userId,
-      name,
-      quantity,
-      ingredientId,
-    );
-    hasBeenAdded = 0;
-  }
+  // Preserve sync flag; check/uncheck no longer mutates pantry.
+  const hasBeenAdded = flagFromRow(existing) ? 1 : 0;
 
   const now = nowUnixSeconds();
 
@@ -286,4 +305,111 @@ export async function deleteShoppingListItem(
     .bind(id, userId)
     .run();
   return (result.meta?.changes ?? 0) > 0;
+}
+
+export function assertBatchSize(count: number): string | null {
+  if (count <= 0) return 'items is required';
+  if (count > MAX_BATCH) return `At most ${MAX_BATCH} items allowed`;
+  return null;
+}
+
+export async function syncItemsToPantry(
+  db: D1Database,
+  userId: string,
+  items: SyncToPantryItemInput[],
+): Promise<SyncToPantryResult> {
+  const synced: ShoppingListItemDto[] = [];
+  const skipped: SyncSkip[] = [];
+
+  for (const item of items) {
+    const row = await getShoppingListItem(db, userId, item.id);
+    if (!row) {
+      skipped.push({ id: item.id, reason: 'not_found' });
+      continue;
+    }
+    if (flagFromRow(row)) {
+      skipped.push({ id: item.id, reason: 'already_synced' });
+      continue;
+    }
+    if (row.checked !== 1) {
+      skipped.push({ id: item.id, reason: 'not_checked' });
+      continue;
+    }
+
+    const quantity =
+      item.quantity !== undefined
+        ? item.quantity
+        : quantityFromRow(row.quantity);
+    if (!Number.isFinite(quantity)) {
+      skipped.push({ id: item.id, reason: 'invalid_quantity' });
+      continue;
+    }
+    const unit =
+      item.unit !== undefined && item.unit.trim()
+        ? item.unit.trim()
+        : (row.unit ?? 'pcs');
+
+    await syncPantryOnCheck(
+      db,
+      userId,
+      row.name,
+      quantity,
+      unit,
+      row.ingredient_id,
+    );
+
+    // Persist optional qty/unit overrides on the shopping row so unsync matches.
+    if (item.quantity !== undefined || item.unit !== undefined) {
+      const now = nowUnixSeconds();
+      await db
+        .prepare(
+          `UPDATE shopping_list_items
+           SET quantity = ?, unit = ?, has_been_added_to_pantry = 1, updated_at = ?
+           WHERE id = ? AND user_id = ?`,
+        )
+        .bind(String(quantity), unit, now, item.id, userId)
+        .run();
+    } else {
+      await setSyncedFlag(db, userId, item.id, 1);
+    }
+
+    const updated = await getShoppingListItem(db, userId, item.id);
+    if (updated) synced.push(toShoppingListItemDto(updated));
+  }
+
+  return { synced, skipped };
+}
+
+export async function unsyncItemsFromPantry(
+  db: D1Database,
+  userId: string,
+  itemIds: string[],
+): Promise<UnsyncFromPantryResult> {
+  const unsynced: ShoppingListItemDto[] = [];
+  const skipped: SyncSkip[] = [];
+
+  for (const id of itemIds) {
+    const row = await getShoppingListItem(db, userId, id);
+    if (!row) {
+      skipped.push({ id, reason: 'not_found' });
+      continue;
+    }
+    if (!flagFromRow(row)) {
+      skipped.push({ id, reason: 'not_synced' });
+      continue;
+    }
+
+    await syncPantryOnUncheck(
+      db,
+      userId,
+      row.name,
+      quantityFromRow(row.quantity),
+      row.ingredient_id,
+    );
+    await setSyncedFlag(db, userId, id, 0);
+    const updated = await getShoppingListItem(db, userId, id);
+    if (updated) unsynced.push(toShoppingListItemDto(updated));
+  }
+
+  return { unsynced, skipped };
 }

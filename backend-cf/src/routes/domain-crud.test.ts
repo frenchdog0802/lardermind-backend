@@ -374,6 +374,55 @@ function createMockDb() {
             return { meta: { changes: 1 } };
           }
           if (sql.includes('UPDATE shopping_list_items')) {
+            // Flag-only: SET has_been_added_to_pantry = ?, updated_at = ? WHERE id = ? AND user_id = ?
+            if (
+              sql.includes('SET has_been_added_to_pantry = ?') &&
+              !sql.includes('SET name = ?') &&
+              !sql.includes('SET quantity = ?')
+            ) {
+              const [hasBeenAdded, updatedAt, id, userId] = bound as [
+                number,
+                number,
+                string,
+                string,
+              ];
+              const row = store.shopping.get(id);
+              if (!row || row.user_id !== userId) {
+                return { meta: { changes: 0 } };
+              }
+              store.shopping.set(id, {
+                ...row,
+                has_been_added_to_pantry: hasBeenAdded,
+                updated_at: updatedAt,
+              });
+              return { meta: { changes: 1 } };
+            }
+            // Qty/unit + flag: SET quantity = ?, unit = ?, has_been_added_to_pantry = 1, updated_at = ?
+            if (
+              sql.includes('SET quantity = ?') &&
+              sql.includes('has_been_added_to_pantry') &&
+              !sql.includes('SET name = ?')
+            ) {
+              const [quantity, unit, updatedAt, id, userId] = bound as [
+                string,
+                string,
+                number,
+                string,
+                string,
+              ];
+              const row = store.shopping.get(id);
+              if (!row || row.user_id !== userId) {
+                return { meta: { changes: 0 } };
+              }
+              store.shopping.set(id, {
+                ...row,
+                quantity,
+                unit,
+                has_been_added_to_pantry: 1,
+                updated_at: updatedAt,
+              });
+              return { meta: { changes: 1 } };
+            }
             const hasSyncFlag = sql.includes('has_been_added_to_pantry');
             if (hasSyncFlag) {
               const [
@@ -807,7 +856,7 @@ describe('domain CRUD routes', () => {
     expect(listBody.data[0].details.quantity).toBe(2);
   });
 
-  it('checking a shopping item adds quantity to pantry (idempotent; uncheck restores)', async () => {
+  it('checking a shopping item does not add to pantry', async () => {
     const headers = {
       Authorization: await authHeader(USER_A),
       'Content-Type': 'application/json',
@@ -828,61 +877,157 @@ describe('domain CRUD routes', () => {
       env,
     );
     expect(create.status).toBe(201);
-    const created = (await create.json()) as { data: { id: string } };
-
-    const pantryBefore = await app.request('/api/pantry-item', { headers }, env);
-    expect(pantryBefore.status).toBe(200);
-    const pantryBeforeBody = (await pantryBefore.json()) as {
-      data: Array<{ name: string; quantity: number }>;
+    const created = (await create.json()) as {
+      data: { id: string; synced_to_pantry: boolean };
     };
-    expect(pantryBeforeBody.data).toHaveLength(0);
+    expect(created.data.synced_to_pantry).toBe(false);
 
-    const check = await app.request(`/api/shopping-list/${created.data.id}`, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify({ checked: true }),
-    }, env);
+    const check = await app.request(
+      `/api/shopping-list/${created.data.id}`,
+      {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ checked: true }),
+      },
+      env,
+    );
     expect(check.status).toBe(200);
+    const checkedBody = (await check.json()) as {
+      data: { checked: boolean; synced_to_pantry: boolean };
+    };
+    expect(checkedBody.data.checked).toBe(true);
+    expect(checkedBody.data.synced_to_pantry).toBe(false);
 
-    const pantryAfterCheck = await app.request('/api/pantry-item', { headers }, env);
-    const pantryAfterCheckBody = (await pantryAfterCheck.json()) as {
+    const pantry = await app.request('/api/pantry-item', { headers }, env);
+    const pantryBody = (await pantry.json()) as {
+      data: Array<{ name: string }>;
+    };
+    expect(pantryBody.data).toHaveLength(0);
+  });
+
+  it('batch sync adds to pantry once; resync skips; unsync restores', async () => {
+    const headers = {
+      Authorization: await authHeader(USER_A),
+      'Content-Type': 'application/json',
+    };
+
+    const create = await app.request(
+      '/api/shopping-list',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: 'Garlic',
+          quantity: 1,
+          unit: 'pack',
+          checked: false,
+        }),
+      },
+      env,
+    );
+    const created = (await create.json()) as { data: { id: string } };
+    const id = created.data.id;
+
+    await app.request(
+      `/api/shopping-list/${id}`,
+      {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ checked: true }),
+      },
+      env,
+    );
+
+    const sync = await app.request(
+      '/api/shopping-list/sync-to-pantry',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ items: [{ id }] }),
+      },
+      env,
+    );
+    expect(sync.status).toBe(200);
+    const syncBody = (await sync.json()) as {
+      data: {
+        synced: Array<{ id: string; synced_to_pantry: boolean }>;
+        skipped: unknown[];
+      };
+    };
+    expect(syncBody.data.synced).toHaveLength(1);
+    expect(syncBody.data.synced[0].synced_to_pantry).toBe(true);
+    expect(syncBody.data.skipped).toHaveLength(0);
+
+    const pantryAfter = await app.request('/api/pantry-item', { headers }, env);
+    const pantryAfterBody = (await pantryAfter.json()) as {
       data: Array<{ name: string; quantity: number; unit: string }>;
     };
-    expect(pantryAfterCheckBody.data).toHaveLength(1);
-    expect(pantryAfterCheckBody.data[0].name).toBe('Garlic');
-    expect(pantryAfterCheckBody.data[0].quantity).toBe(1);
-    expect(pantryAfterCheckBody.data[0].unit).toBe('pack');
+    expect(pantryAfterBody.data).toHaveLength(1);
+    expect(pantryAfterBody.data[0].name).toBe('Garlic');
+    expect(pantryAfterBody.data[0].quantity).toBe(1);
+    expect(pantryAfterBody.data[0].unit).toBe('pack');
 
-    const checkAgain = await app.request(`/api/shopping-list/${created.data.id}`, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify({ checked: true }),
-    }, env);
-    expect(checkAgain.status).toBe(200);
+    const syncAgain = await app.request(
+      '/api/shopping-list/sync-to-pantry',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ items: [{ id }] }),
+      },
+      env,
+    );
+    const syncAgainBody = (await syncAgain.json()) as {
+      data: {
+        synced: unknown[];
+        skipped: Array<{ id: string; reason: string }>;
+      };
+    };
+    expect(syncAgainBody.data.synced).toHaveLength(0);
+    expect(syncAgainBody.data.skipped).toEqual([
+      { id, reason: 'already_synced' },
+    ]);
 
-    const pantryIdempotent = await app.request('/api/pantry-item', { headers }, env);
+    const pantryIdempotent = await app.request(
+      '/api/pantry-item',
+      { headers },
+      env,
+    );
     const pantryIdempotentBody = (await pantryIdempotent.json()) as {
       data: Array<{ quantity: number }>;
     };
-    expect(pantryIdempotentBody.data).toHaveLength(1);
     expect(pantryIdempotentBody.data[0].quantity).toBe(1);
 
-    const uncheck = await app.request(`/api/shopping-list/${created.data.id}`, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify({ checked: false }),
-    }, env);
-    expect(uncheck.status).toBe(200);
+    const unsync = await app.request(
+      '/api/shopping-list/unsync-from-pantry',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ item_ids: [id] }),
+      },
+      env,
+    );
+    expect(unsync.status).toBe(200);
+    const unsyncBody = (await unsync.json()) as {
+      data: {
+        unsynced: Array<{ synced_to_pantry: boolean }>;
+        skipped: unknown[];
+      };
+    };
+    expect(unsyncBody.data.unsynced).toHaveLength(1);
+    expect(unsyncBody.data.unsynced[0].synced_to_pantry).toBe(false);
 
-    const pantryAfterUncheck = await app.request('/api/pantry-item', { headers }, env);
-    const pantryAfterUncheckBody = (await pantryAfterUncheck.json()) as {
+    const pantryAfterUnsync = await app.request(
+      '/api/pantry-item',
+      { headers },
+      env,
+    );
+    const pantryAfterUnsyncBody = (await pantryAfterUnsync.json()) as {
       data: Array<{ quantity: number }>;
     };
-    expect(pantryAfterUncheckBody.data).toHaveLength(1);
-    expect(pantryAfterUncheckBody.data[0].quantity).toBe(0);
+    expect(pantryAfterUnsyncBody.data[0].quantity).toBe(0);
   });
 
-  it('creating a shopping item already checked adds to pantry once', async () => {
+  it('creating a shopping item already checked does not sync until batch', async () => {
     const headers = {
       Authorization: await authHeader(USER_A),
       'Content-Type': 'application/json',
@@ -903,6 +1048,29 @@ describe('domain CRUD routes', () => {
       env,
     );
     expect(create.status).toBe(201);
+    const created = (await create.json()) as {
+      data: { id: string; synced_to_pantry: boolean };
+    };
+    expect(created.data.synced_to_pantry).toBe(false);
+
+    const pantryBefore = await app.request('/api/pantry-item', { headers }, env);
+    const pantryBeforeBody = (await pantryBefore.json()) as {
+      data: unknown[];
+    };
+    expect(pantryBeforeBody.data).toHaveLength(0);
+
+    const sync = await app.request(
+      '/api/shopping-list/sync-to-pantry',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          items: [{ id: created.data.id, quantity: 5, unit: 'pcs' }],
+        }),
+      },
+      env,
+    );
+    expect(sync.status).toBe(200);
 
     const pantry = await app.request('/api/pantry-item', { headers }, env);
     const pantryBody = (await pantry.json()) as {
@@ -910,7 +1078,51 @@ describe('domain CRUD routes', () => {
     };
     expect(pantryBody.data).toHaveLength(1);
     expect(pantryBody.data[0].name).toBe('Onion');
-    expect(pantryBody.data[0].quantity).toBe(3);
+    expect(pantryBody.data[0].quantity).toBe(5);
+  });
+
+  it('sync skips unchecked items', async () => {
+    const headers = {
+      Authorization: await authHeader(USER_A),
+      'Content-Type': 'application/json',
+    };
+
+    const create = await app.request(
+      '/api/shopping-list',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: 'Milk',
+          quantity: 1,
+          unit: 'L',
+          checked: false,
+        }),
+      },
+      env,
+    );
+    const created = (await create.json()) as { data: { id: string } };
+
+    const sync = await app.request(
+      '/api/shopping-list/sync-to-pantry',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ items: [{ id: created.data.id }] }),
+      },
+      env,
+    );
+    expect(sync.status).toBe(200);
+    const syncBody = (await sync.json()) as {
+      data: {
+        synced: unknown[];
+        skipped: Array<{ id: string; reason: string }>;
+      };
+    };
+    expect(syncBody.data.synced).toHaveLength(0);
+    expect(syncBody.data.skipped).toEqual([
+      { id: created.data.id, reason: 'not_checked' },
+    ]);
   });
 
   it('GET /api/folder ensures default folders including Uncategorized', async () => {
@@ -1090,5 +1302,112 @@ describe('domain CRUD routes', () => {
       data: Array<{ name: string; quantity: number }>;
     };
     expect(pantryBody.data[0].quantity).toBe(3);
+  });
+
+  it('meal-plan availability is read-only and week-allocates pantry', async () => {
+    const headers = {
+      Authorization: await authHeader(USER_A),
+      'Content-Type': 'application/json',
+    };
+
+    const recipeRes = await app.request(
+      '/api/recipe',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_name: 'Chicken Bowl',
+          instructions: ['Cook'],
+          ingredients: [{ name: 'Chicken', quantity: 200, unit: 'g' }],
+        }),
+      },
+      env,
+    );
+    const recipeBody = (await recipeRes.json()) as { data: { id: string } };
+
+    await app.request(
+      '/api/pantry-item',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ name: 'Chicken', quantity: 250, unit: 'g' }),
+      },
+      env,
+    );
+
+    const plan1 = await app.request(
+      '/api/meal-plan',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_type: 'dinner',
+          serving_date: '2026-10-06',
+          recipe_id: recipeBody.data.id,
+          meal_name: 'Chicken Bowl',
+        }),
+      },
+      env,
+    );
+    const plan1Body = (await plan1.json()) as { data: { id: string } };
+
+    const plan2 = await app.request(
+      '/api/meal-plan',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_type: 'dinner',
+          serving_date: '2026-10-07',
+          recipe_id: recipeBody.data.id,
+          meal_name: 'Chicken Bowl',
+        }),
+      },
+      env,
+    );
+    const plan2Body = (await plan2.json()) as { data: { id: string } };
+
+    const availRes = await app.request(
+      '/api/meal-plan/availability?from=2026-10-06&to=2026-10-12',
+      { headers },
+      env,
+    );
+    expect(availRes.status).toBe(200);
+    const availBody = (await availRes.json()) as {
+      data: {
+        meals: Array<{
+          meal_plan_id: string;
+          status: string;
+          shortages: Array<{ name: string }>;
+        }>;
+        weekShortages: Array<{ name: string; needed: number; available: number }>;
+      };
+    };
+
+    const byId = Object.fromEntries(
+      availBody.data.meals.map((m) => [m.meal_plan_id, m]),
+    );
+    expect(byId[plan1Body.data.id]?.status).toBe('ok');
+    expect(byId[plan2Body.data.id]?.status).toBe('short');
+    expect(availBody.data.weekShortages.length).toBeGreaterThan(0);
+    expect(availBody.data.weekShortages[0].name).toBe('Chicken');
+    expect(availBody.data.weekShortages[0].available).toBe(0);
+
+    const pantryList = await app.request('/api/pantry-item', { headers }, env);
+    const pantryBody = (await pantryList.json()) as {
+      data: Array<{ name: string; quantity: number }>;
+    };
+    const chicken = pantryBody.data.find((p) => p.name === 'Chicken');
+    expect(chicken?.quantity).toBe(250);
+  });
+
+  it('meal-plan availability rejects bad dates', async () => {
+    const headers = { Authorization: await authHeader(USER_A) };
+    const res = await app.request(
+      '/api/meal-plan/availability?from=2026-10-12&to=2026-10-01',
+      { headers },
+      env,
+    );
+    expect(res.status).toBe(400);
   });
 });

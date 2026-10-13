@@ -94,7 +94,7 @@ Static HTML/CSS/JS — Warm Kitchen styling, aligned with web app tokens. Waitli
 - **Auth:** Email/password signup & signin, JWT issuance, Google OAuth login, signout endpoint
 - **Core CRUD:** Recipes, folders, ingredients (with bulk insert + search), pantry items (bulk insert/update), shopping list (bulk insert), meal plans, users
 - **Meal planning logic:** Creating a meal plan compares recipe ingredients vs pantry and auto-adds shortfalls to the shopping list
-- **Shopping list ↔ pantry sync:** Checking/unchecking items updates pantry quantities via `has_been_added_to_pantry` flag
+- **Shopping list ↔ pantry sync:** Checking marks purchased only; batch `POST /api/shopping-list/sync-to-pantry` merges into pantry via `has_been_added_to_pantry` / `synced_to_pantry` (unsync + undo supported)
 - **Image upload:** Cloudinary upload/delete via `UploadController`
 - **AI chat (LangChain4j):**
   - `POST /api/chat/send` — prompt guard, tool calling, structured response types
@@ -117,7 +117,7 @@ Nine active views switched via `currentView` state in `App.tsx`:
 | Calendar | `Calendar.tsx` | Meal plan month/list views, add/delete |
 | Recipe Manager | `RecipeManager.tsx` | Folder-organized CRUD, image upload, ingredient autocomplete |
 | Pantry Inventory | `PantryInventory.tsx` | Full CRUD with search |
-| Shopping List | `ShoppingList.tsx` | Add/check/delete with pantry sync |
+| Shopping List | `ShoppingList.tsx` | Add/check/delete; batch sync to pantry with review + undo |
 | Settings | `Settings.tsx` | Profile/units/theme UI (local state only) |
 
 Layout: `Sidebar` (desktop) + `BottomNav` (mobile). Auth via `authContext`; data via `pantryContext`.

@@ -178,7 +178,7 @@ flowchart LR
 | Flow | Behavior |
 |------|----------|
 | Meal plan → shopping | `MealPlanService` compares recipe ingredients vs pantry; adds shortfalls to shopping list |
-| Shopping check → pantry | Checking an item adds quantity to pantry; `has_been_added_to_pantry` prevents double-sync |
+| Shopping → pantry (batch) | Checking marks purchased; explicit batch sync merges into pantry; `has_been_added_to_pantry` / `synced_to_pantry` prevents double-sync |
 | AI chat → actions | Tools can create recipes, modify meal plan, add shopping items |
 
 ---

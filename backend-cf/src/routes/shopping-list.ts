@@ -4,14 +4,18 @@ import type { Env } from '../env';
 import type { AuthVariables } from '../middleware/auth';
 import { requireAuth } from '../middleware/auth';
 import {
+  assertBatchSize,
   createShoppingListItem,
   deleteShoppingListItem,
   getShoppingListItem,
   listShoppingListItems,
+  syncItemsToPantry,
   toShoppingListItemDto,
+  unsyncItemsFromPantry,
   updateShoppingListItem,
   type ShoppingListItemInput,
   type ShoppingListItemPatch,
+  type SyncToPantryItemInput,
 } from '../db/shopping-list';
 
 export const shoppingListRoutes = new Hono<{
@@ -126,6 +130,65 @@ function parsePatchInput(
   return { ok: true, value: patch };
 }
 
+function parseSyncToPantryBody(
+  body: unknown,
+):
+  | { ok: true; value: SyncToPantryItemInput[] }
+  | { ok: false; message: string } {
+  const root = asRecord(body);
+  if (!root) return { ok: false, message: 'Invalid body' };
+  if (!Array.isArray(root.items)) {
+    return { ok: false, message: 'items is required' };
+  }
+  const sizeError = assertBatchSize(root.items.length);
+  if (sizeError) return { ok: false, message: sizeError };
+
+  const items: SyncToPantryItemInput[] = [];
+  for (const raw of root.items) {
+    const rec = asRecord(raw);
+    if (!rec || typeof rec.id !== 'string' || !rec.id.trim()) {
+      return { ok: false, message: 'Each item requires id' };
+    }
+    const entry: SyncToPantryItemInput = { id: rec.id.trim() };
+    if (rec.quantity !== undefined) {
+      const quantity = parseQuantity(rec.quantity);
+      if (quantity === null) {
+        return { ok: false, message: 'Invalid quantity' };
+      }
+      entry.quantity = quantity;
+    }
+    if (rec.unit !== undefined) {
+      entry.unit =
+        typeof rec.unit === 'string' && rec.unit.trim()
+          ? rec.unit.trim()
+          : 'pcs';
+    }
+    items.push(entry);
+  }
+  return { ok: true, value: items };
+}
+
+function parseUnsyncBody(
+  body: unknown,
+): { ok: true; value: string[] } | { ok: false; message: string } {
+  const root = asRecord(body);
+  if (!root) return { ok: false, message: 'Invalid body' };
+  if (!Array.isArray(root.item_ids)) {
+    return { ok: false, message: 'item_ids is required' };
+  }
+  const sizeError = assertBatchSize(root.item_ids.length);
+  if (sizeError) return { ok: false, message: sizeError };
+
+  const ids: string[] = [];
+  for (const raw of root.item_ids) {
+    if (typeof raw !== 'string' || !raw.trim()) {
+      return { ok: false, message: 'Each item_id must be a non-empty string' };
+    }
+    ids.push(raw.trim());
+  }
+  return { ok: true, value: ids };
+}
+
 shoppingListRoutes.get('/api/shopping-list', async (c) => {
   const userId = c.get('userId');
   const query = c.req.query('query');
@@ -146,6 +209,36 @@ shoppingListRoutes.post('/api/shopping-list', async (c) => {
 
   const row = await createShoppingListItem(c.env.DB, userId, parsed.value);
   return c.json(ok(toShoppingListItemDto(row)), 201);
+});
+
+shoppingListRoutes.post('/api/shopping-list/sync-to-pantry', async (c) => {
+  const userId = c.get('userId');
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json(fail('Invalid JSON'), 400);
+  }
+  const parsed = parseSyncToPantryBody(body);
+  if (!parsed.ok) return c.json(fail(parsed.message), 400);
+
+  const result = await syncItemsToPantry(c.env.DB, userId, parsed.value);
+  return c.json(ok(result));
+});
+
+shoppingListRoutes.post('/api/shopping-list/unsync-from-pantry', async (c) => {
+  const userId = c.get('userId');
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json(fail('Invalid JSON'), 400);
+  }
+  const parsed = parseUnsyncBody(body);
+  if (!parsed.ok) return c.json(fail(parsed.message), 400);
+
+  const result = await unsyncItemsFromPantry(c.env.DB, userId, parsed.value);
+  return c.json(ok(result));
 });
 
 shoppingListRoutes.get('/api/shopping-list/:id', async (c) => {
