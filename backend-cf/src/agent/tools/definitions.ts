@@ -5,8 +5,22 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     type: 'function',
     function: {
       name: 'listPantry',
-      description: 'List the user pantry / inventory items.',
-      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      description:
+        'List pantry items with on-hand quantity plus soft-reserve fields (reserved/available) for planned meals. quantity is on-hand; prefer available when planning.',
+      parameters: {
+        type: 'object',
+        properties: {
+          from: {
+            type: 'string',
+            description: 'YYYY-MM-DD soft-reserve window start (default: today UTC).',
+          },
+          to: {
+            type: 'string',
+            description: 'YYYY-MM-DD soft-reserve window end (default: from+14).',
+          },
+        },
+        additionalProperties: false,
+      },
     },
   },
   {
@@ -72,6 +86,70 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
                 unit: { type: 'string' },
               },
               required: ['name', 'quantity'],
+            },
+          },
+        },
+        required: ['items'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'updatePantryItems',
+      description:
+        'Set or change pantry quantities (requires approval). Use delta for reduce/increase; quantity≤0 or result≤0 deletes the row. Do not use negative addPantryItems.',
+      parameters: {
+        type: 'object',
+        properties: {
+          items: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                pantry_item_id: { type: 'string' },
+                quantity: {
+                  type: 'number',
+                  description: 'Absolute quantity when mode is set (default).',
+                },
+                delta: {
+                  type: 'number',
+                  description:
+                    'Signed change when mode is delta (e.g. -3 to reduce by 3).',
+                },
+                mode: {
+                  type: 'string',
+                  enum: ['set', 'delta'],
+                  description:
+                    'set = absolute quantity; delta = add delta to current. Default: delta if delta provided, else set.',
+                },
+                unit: { type: 'string' },
+              },
+            },
+          },
+        },
+        required: ['items'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'removePantryItems',
+      description:
+        'Delete pantry items by name or id (requires approval). Missing items return per-item errors.',
+      parameters: {
+        type: 'object',
+        properties: {
+          items: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                pantry_item_id: { type: 'string' },
+              },
             },
           },
         },
@@ -158,6 +236,56 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
           },
         },
         required: ['meal_type', 'serving_date'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'planMeals',
+      description:
+        'Schedule multiple meals on the calendar (requires approval). Prefer over repeated addRecipeToMenu for multi-day plans. Does not deduct pantry; soft-reserves only.',
+      parameters: {
+        type: 'object',
+        properties: {
+          meals: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                meal_name: { type: 'string' },
+                meal_type: {
+                  type: 'string',
+                  enum: ['breakfast', 'lunch', 'dinner', 'snack'],
+                },
+                serving_date: {
+                  type: 'string',
+                  description: 'YYYY-MM-DD',
+                },
+                recipe_id: { type: 'string' },
+              },
+              required: ['meal_name', 'meal_type', 'serving_date'],
+            },
+          },
+        },
+        required: ['meals'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'getMealPlanAvailability',
+      description:
+        'Read-only: week-allocate pantry against planned meals; return per-meal status and aggregated shortages (for shopping). Does not write pantry.',
+      parameters: {
+        type: 'object',
+        properties: {
+          from: { type: 'string', description: 'YYYY-MM-DD' },
+          to: { type: 'string', description: 'YYYY-MM-DD' },
+        },
+        required: ['from', 'to'],
+        additionalProperties: false,
       },
     },
   },

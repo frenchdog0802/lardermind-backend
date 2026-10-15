@@ -9,7 +9,11 @@ import {
 describe('HITL helpers', () => {
   it('classifies mutating tools', () => {
     expect(isMutatingTool('addPantryItems')).toBe(true);
+    expect(isMutatingTool('updatePantryItems')).toBe(true);
+    expect(isMutatingTool('removePantryItems')).toBe(true);
+    expect(isMutatingTool('planMeals')).toBe(true);
     expect(isMutatingTool('listPantry')).toBe(false);
+    expect(isMutatingTool('getMealPlanAvailability')).toBe(false);
     expect(isMutatingTool('suggestMealsFromPantry')).toBe(false);
   });
 
@@ -20,6 +24,16 @@ describe('HITL helpers', () => {
       }),
     ).toBe('eggs, milk');
     expect(
+      argsSummary('updatePantryItems', {
+        items: [{ name: '排骨', delta: -3 }],
+      }),
+    ).toBe('排骨 -3');
+    expect(
+      argsSummary('removePantryItems', {
+        items: [{ name: '排骨' }],
+      }),
+    ).toBe('刪除 排骨');
+    expect(
       argsSummary('createRecipe', { meal_name: 'Pasta' }),
     ).toBe('Pasta');
     expect(
@@ -28,6 +42,22 @@ describe('HITL helpers', () => {
         serving_date: '2026-09-22',
       }),
     ).toBe('Soup on 2026-09-22');
+    expect(
+      argsSummary('planMeals', {
+        meals: [
+          {
+            meal_name: 'A',
+            meal_type: 'dinner',
+            serving_date: '2026-10-15',
+          },
+          {
+            meal_name: 'B',
+            meal_type: 'dinner',
+            serving_date: '2026-10-16',
+          },
+        ],
+      }),
+    ).toBe('2 meals (2026-10-15…2026-10-16)');
   });
 
   it('maps pending tool summaries', () => {

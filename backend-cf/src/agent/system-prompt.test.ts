@@ -34,4 +34,15 @@ describe('buildCookingAssistantSystemPrompt', () => {
     expect(prompt).toMatch(/prior turn failed to call tools/i);
     expect(prompt).toMatch(/successful tool or card result/i);
   });
+
+  it('documents soft-reserve, pantry CRUD, and orchestration', () => {
+    const prompt = buildCookingAssistantSystemPrompt({
+      todayLocalDate: '2026-10-11',
+    });
+    expect(prompt).toMatch(/updatePantryItems|removePantryItems/);
+    expect(prompt).toMatch(/soft-reserves|soft reserve/i);
+    expect(prompt).toMatch(/planMeals/);
+    expect(prompt).toMatch(/getMealPlanAvailability/);
+    expect(prompt).toMatch(/addItemsToShoppingList/);
+  });
 });

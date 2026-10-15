@@ -188,7 +188,7 @@ Feature: [docs/features/frontend-cf-pages.md](../docs/features/frontend-cf-pages
 ### Chat tools + HITL
 
 - Feature: [docs/features/backend-cf-chat-tools.md](../docs/features/backend-cf-chat-tools.md)
-- Tools: `listPantry`, `listMyRecipes`, `getRecipeDetails`, `listMealPlans`, `getPreferences`, `suggestMealsFromPantry`, plus mutating `addPantryItems`, `addItemsToShoppingList`, `createRecipe`, `addRecipeToMenu`, `updatePreferences` (HITL approve/reject via `POST /api/chat/resume`).
+- Tools: `listPantry` (on_hand/reserved/available), `listMyRecipes`, `getRecipeDetails`, `listMealPlans`, `getPreferences`, `suggestMealsFromPantry` (cookable-aware), `getMealPlanAvailability`, plus mutating `addPantryItems`, `updatePantryItems`, `removePantryItems`, `addItemsToShoppingList`, `createRecipe`, `addRecipeToMenu`, `planMeals`, `updatePreferences` (HITL approve/reject via `POST /api/chat/resume`). Soft-reserve on schedule; on-hand deduct only on meal confirm.
 - SSE events: `status`, `token`, `interrupt` (terminal — no `done`), `done`, `error`.
 - Migration `0005_chat_hitl.sql` adds `locked_at` + `pending_interrupt_json` on `chat_sessions`.
 

@@ -11,13 +11,13 @@
 Web subscription UI already expects Checkout (`createCheckout` → redirect) and return query `?subscription=success|cancelled`.  
 `backend-cf` only stubs `plans` / `status` with `stripeCheckoutEnabled: false` and hardcodes `isPro: false`. No Stripe secrets, price IDs, webhook, customer mapping, or portal.
 
-This feature makes **Web Pro** purchasable and enforceable via Stripe, while **App Pro remains Google Play Billing** (separate feature).
+This feature makes **Web Pro** purchasable and enforceable via Stripe, while **App Pro uses App Store IAP first** (Android Play Billing later; separate feature). See `docs/store-launch-todo.md`.
 
 ### Locked decisions
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Platform | **Web only** | Store policy: App unlock must use Play Billing (`docs/store-launch-todo.md`) |
+| Platform | **Web only** | Store policy: App unlock must use store IAP (`docs/store-launch-todo.md`) |
 | Checkout UX | **Stripe-hosted Checkout Session** | Frontend already redirects to `checkoutUrl`; no Elements |
 | Manage / cancel / payment method / plan switch | **Stripe Customer Portal** | Covers cancel-at-period-end, update card, monthly↔yearly without custom UI |
 | Entitlement source of truth | **D1 `subscriptions` row** updated by **verified webhooks** | Do not trust success URL alone |

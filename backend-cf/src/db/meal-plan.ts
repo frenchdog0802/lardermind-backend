@@ -2,6 +2,7 @@ import { nowUnixSeconds } from '../lib/time';
 import {
   findByIngredientId,
   findByNameCi,
+  listPantryItems,
   updatePantryItem,
   type PantryItemRow,
 } from './pantry';
@@ -69,10 +70,333 @@ export type ConfirmMealPlanResult = {
   alreadyConfirmed: boolean;
 };
 
+export type MealAvailabilityStatus = 'ok' | 'short' | 'unknown';
+
+export type MealAvailabilityEntry = {
+  meal_plan_id: string;
+  status: MealAvailabilityStatus;
+  shortages: MealConfirmShortage[];
+};
+
+export type WeekAvailabilityResult = {
+  meals: MealAvailabilityEntry[];
+  weekShortages: MealConfirmShortage[];
+};
+
+/** Mutable pantry quantity used for week preview (never written to DB). */
+export type PantryPoolEntry = {
+  name: string;
+  ingredient_id?: string;
+  pantry_item_id?: string;
+  quantity: number;
+  unit: string;
+};
+
+/** Soft-reserve view: on-hand unchanged in DB; reserved is virtual allocation. */
+export type PantrySoftReserveEntry = {
+  pantry_item_id: string;
+  name: string;
+  unit: string;
+  on_hand: number;
+  reserved: number;
+  available: number;
+  ingredient_id?: string;
+};
+
+export type AllocateAgainstPoolResult = {
+  status: MealAvailabilityStatus;
+  shortages: MealConfirmShortage[];
+};
+
 function quantityFromRow(raw: string | null): number {
   if (raw == null || raw === '') return 0;
   const n = Number(raw);
   return Number.isFinite(n) ? n : 0;
+}
+
+function nameKey(name: string): string {
+  return `name:${name.trim().toLowerCase()}`;
+}
+
+function idKey(ingredientId: string): string {
+  return `id:${ingredientId}`;
+}
+
+function shortageAggKey(s: MealConfirmShortage): string {
+  const id = s.ingredient_id?.trim();
+  if (id) return `${idKey(id)}|${s.unit}`;
+  return `${nameKey(s.name)}|${s.unit}`;
+}
+
+/** Build a pool map keyed by ingredient_id and by lowercased name (same object). */
+export function buildPantryPool(
+  rows: PantryItemRow[],
+): Map<string, PantryPoolEntry> {
+  const pool = new Map<string, PantryPoolEntry>();
+  for (const row of rows) {
+    const entry: PantryPoolEntry = {
+      name: row.name,
+      pantry_item_id: row.id,
+      quantity: quantityFromRow(row.quantity),
+      unit: row.unit ?? 'pcs',
+      ...(row.ingredient_id ? { ingredient_id: row.ingredient_id } : {}),
+    };
+    if (row.ingredient_id) pool.set(idKey(row.ingredient_id), entry);
+    pool.set(nameKey(row.name), entry);
+  }
+  return pool;
+}
+
+function addDaysYmd(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y!, m! - 1, d!));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+/** Default soft-reserve window: from → from+14 days inclusive. */
+export function defaultSoftReserveRange(fromYmd: string): {
+  from: string;
+  to: string;
+} {
+  return { from: fromYmd, to: addDaysYmd(fromYmd, 14) };
+}
+
+/**
+ * Soft-reserve pantry against active meal plans in [from, to].
+ * Does not write D1. reserved = allocated amount; available = remaining pool.
+ */
+export async function computePantrySoftReserve(
+  db: D1Database,
+  userId: string,
+  from: string,
+  to: string,
+): Promise<PantrySoftReserveEntry[]> {
+  const [allPlans, pantryRows] = await Promise.all([
+    listMealPlans(db, userId),
+    listPantryItems(db, userId),
+  ]);
+
+  const plans = allPlans
+    .filter(
+      (p) =>
+        isDateInRange(p.serving_date, from, to) &&
+        ACTIVE_PLAN_STATUSES.has(p.status),
+    )
+    .sort((a, b) => {
+      const d = a.serving_date.localeCompare(b.serving_date);
+      if (d !== 0) return d;
+      return (a.created_at ?? 0) - (b.created_at ?? 0);
+    });
+
+  const pool = buildPantryPool(pantryRows);
+
+  for (const plan of plans) {
+    if (!plan.recipe_id) continue;
+    const recipe = await getRecipe(db, userId, plan.recipe_id);
+    if (!recipe) continue;
+    const ingredients = await listRecipeIngredientRows(db, plan.recipe_id);
+    allocateIngredientsAgainstPool(ingredients, pool, {
+      hasRecipeId: true,
+      recipeFound: true,
+    });
+  }
+
+  return softReserveFromAllocatedPool(pantryRows, pool);
+}
+
+/** Map pantry rows to soft-reserve entries after pool allocation. */
+export function softReserveFromAllocatedPool(
+  pantryRows: PantryItemRow[],
+  pool: Map<string, PantryPoolEntry>,
+): PantrySoftReserveEntry[] {
+  return pantryRows.map((row) => {
+    const onHand = quantityFromRow(row.quantity);
+    const entry =
+      (row.ingredient_id ? pool.get(idKey(row.ingredient_id)) : undefined) ??
+      pool.get(nameKey(row.name));
+    const available = entry ? Math.max(0, entry.quantity) : onHand;
+    const reserved = Math.max(0, onHand - available);
+    return {
+      pantry_item_id: row.id,
+      name: row.name,
+      unit: row.unit ?? 'pcs',
+      on_hand: onHand,
+      reserved,
+      available,
+      ...(row.ingredient_id ? { ingredient_id: row.ingredient_id } : {}),
+    };
+  });
+}
+
+function findPoolEntry(
+  pool: Map<string, PantryPoolEntry>,
+  ing: Pick<RecipeIngredientRow, 'ingredient_id' | 'name'>,
+): PantryPoolEntry | null {
+  if (ing.ingredient_id) {
+    const byId = pool.get(idKey(ing.ingredient_id));
+    if (byId) return byId;
+  }
+  return pool.get(nameKey(ing.name)) ?? null;
+}
+
+/**
+ * Allocate recipe ingredients against a mutable pantry pool (preview / week lights).
+ * Mutates `pool` quantities. Does not touch D1.
+ */
+export function allocateIngredientsAgainstPool(
+  ingredients: RecipeIngredientRow[] | null | undefined,
+  pool: Map<string, PantryPoolEntry>,
+  opts?: { hasRecipeId: boolean; recipeFound: boolean },
+): AllocateAgainstPoolResult {
+  const hasRecipeId = opts?.hasRecipeId ?? true;
+  const recipeFound = opts?.recipeFound ?? true;
+  if (!hasRecipeId || !recipeFound) {
+    return { status: 'unknown', shortages: [] };
+  }
+
+  const shortages: MealConfirmShortage[] = [];
+  for (const ing of ingredients ?? []) {
+    const needed = quantityFromRow(ing.quantity);
+    const unit = ing.unit ?? 'pcs';
+    const entry = findPoolEntry(pool, ing);
+
+    if (!entry) {
+      shortages.push({
+        ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
+        name: ing.name,
+        needed,
+        available: 0,
+        unit,
+      });
+      continue;
+    }
+
+    const available = entry.quantity;
+    const useQty = Math.min(available, needed);
+    entry.quantity = available - useQty;
+
+    if (useQty < needed) {
+      shortages.push({
+        ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
+        name: ing.name,
+        needed,
+        available,
+        unit: entry.unit || unit,
+      });
+    }
+  }
+
+  return {
+    status: shortages.length > 0 ? 'short' : 'ok',
+    shortages,
+  };
+}
+
+/** Sum per-meal shortfalls into a shopping-oriented week list (needed = deficit). */
+export function aggregateWeekShortages(
+  mealShortages: MealConfirmShortage[][],
+): MealConfirmShortage[] {
+  const map = new Map<string, MealConfirmShortage>();
+  for (const list of mealShortages) {
+    for (const s of list) {
+      const deficit = Math.max(0, s.needed - s.available);
+      if (deficit <= 0) continue;
+      const key = shortageAggKey(s);
+      const existing = map.get(key);
+      if (existing) {
+        existing.needed += deficit;
+      } else {
+        map.set(key, {
+          ...(s.ingredient_id ? { ingredient_id: s.ingredient_id } : {}),
+          name: s.name,
+          needed: deficit,
+          available: 0,
+          unit: s.unit,
+        });
+      }
+    }
+  }
+  return [...map.values()];
+}
+
+function isDateInRange(date: string, from: string, to: string): boolean {
+  return date >= from && date <= to;
+}
+
+const ACTIVE_PLAN_STATUSES = new Set(['PLANNED', 'PENDING_CONFIRM']);
+
+export async function computeWeekAvailability(
+  db: D1Database,
+  userId: string,
+  from: string,
+  to: string,
+): Promise<WeekAvailabilityResult> {
+  const [allPlans, pantryRows] = await Promise.all([
+    listMealPlans(db, userId),
+    listPantryItems(db, userId),
+  ]);
+
+  const plans = allPlans
+    .filter((p) => isDateInRange(p.serving_date, from, to))
+    .sort((a, b) => {
+      const d = a.serving_date.localeCompare(b.serving_date);
+      if (d !== 0) return d;
+      return (a.created_at ?? 0) - (b.created_at ?? 0);
+    });
+
+  const pool = buildPantryPool(pantryRows);
+  const meals: MealAvailabilityEntry[] = [];
+  const shortfallLists: MealConfirmShortage[][] = [];
+
+  for (const plan of plans) {
+    if (!ACTIVE_PLAN_STATUSES.has(plan.status)) {
+      meals.push({
+        meal_plan_id: plan.id,
+        status: 'ok',
+        shortages: [],
+      });
+      continue;
+    }
+
+    if (!plan.recipe_id) {
+      meals.push({
+        meal_plan_id: plan.id,
+        status: 'unknown',
+        shortages: [],
+      });
+      continue;
+    }
+
+    const recipe = await getRecipe(db, userId, plan.recipe_id);
+    if (!recipe) {
+      meals.push({
+        meal_plan_id: plan.id,
+        status: 'unknown',
+        shortages: [],
+      });
+      continue;
+    }
+
+    const ingredients = await listRecipeIngredientRows(db, plan.recipe_id);
+    const result = allocateIngredientsAgainstPool(ingredients, pool, {
+      hasRecipeId: true,
+      recipeFound: true,
+    });
+    meals.push({
+      meal_plan_id: plan.id,
+      status: result.status,
+      shortages: result.shortages,
+    });
+    if (result.shortages.length > 0) {
+      shortfallLists.push(result.shortages);
+    }
+  }
+
+  return {
+    meals,
+    weekShortages: aggregateWeekShortages(shortfallLists),
+  };
 }
 
 export function toMealPlanDto(row: MealPlanRow): MealPlanDto {

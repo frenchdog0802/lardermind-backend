@@ -103,6 +103,10 @@ Greenfield Worker API lives in **`backend-cf/`** (Hono + D1 + Workers AI). Nest 
 - Design: [design/backend-cf-api-design.md](../design/backend-cf-api-design.md)
 - Tasks: [tasks/backend-cf-api/README.md](../../tasks/backend-cf-api/README.md)
 
+## Product epics (Workers / web)
+
+- **Kitchen closed loop** — Pantry ↔ Recipes ↔ Calendar (soft reserve) ↔ Shopping ↔ Chat; schedule does not deduct, confirm does. Phased: [features/kitchen-closed-loop.md](../features/kitchen-closed-loop.md) · [tasks/kitchen-closed-loop/](../../tasks/kitchen-closed-loop/)
+
 ## Out of scope for the “web first” slice
 
 - No Nest business-logic rewrite in place

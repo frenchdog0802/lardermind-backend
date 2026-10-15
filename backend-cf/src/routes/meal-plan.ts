@@ -4,6 +4,7 @@ import type { Env } from '../env';
 import type { AuthVariables } from '../middleware/auth';
 import { requireAuth } from '../middleware/auth';
 import {
+  computeWeekAvailability,
   confirmMealPlan,
   createMealPlan,
   deleteMealPlan,
@@ -98,6 +99,22 @@ function parsePatchInput(
 
   return { ok: true, value: patch };
 }
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+mealPlanRoutes.get('/api/meal-plan/availability', async (c) => {
+  const userId = c.get('userId');
+  const from = (c.req.query('from') ?? '').trim();
+  const to = (c.req.query('to') ?? '').trim();
+  if (!DATE_RE.test(from) || !DATE_RE.test(to)) {
+    return c.json(fail('from and to are required as YYYY-MM-DD'), 400);
+  }
+  if (from > to) {
+    return c.json(fail('from must be on or before to'), 400);
+  }
+  const result = await computeWeekAvailability(c.env.DB, userId, from, to);
+  return c.json(ok(result));
+});
 
 mealPlanRoutes.get('/api/meal-plan/pending-confirm', async (c) => {
   const userId = c.get('userId');

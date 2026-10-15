@@ -2,9 +2,12 @@ import { isMutatingTool } from './hitl';
 
 export const TOOL_CARD_TYPES: Record<string, string> = {
   addPantryItems: 'pantry_updated',
+  updatePantryItems: 'pantry_updated',
+  removePantryItems: 'pantry_updated',
   addItemsToShoppingList: 'shopping_list_updated',
   createRecipe: 'recipe_created',
   addRecipeToMenu: 'meal_plan_updated',
+  planMeals: 'meal_plan_updated',
   updatePreferences: 'preferences_updated',
   suggestMealsFromPantry: 'meal_suggestions',
 };
