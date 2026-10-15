@@ -340,6 +340,14 @@ export async function getPendingInterrupt(
   }
 }
 
+/** History-safe pending payload (tool summaries only; no toolCalls / LLM messages). */
+export function pendingInterruptForHistory(
+  pending: PendingInterrupt | null,
+): { pendingTools: PendingToolSummary[] } | null {
+  if (!pending) return null;
+  return { pendingTools: pending.pendingTools };
+}
+
 export async function clearPendingInterrupt(
   db: D1Database,
   userId: string,

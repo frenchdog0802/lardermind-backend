@@ -7,9 +7,11 @@ import {
   clearHistory,
   createSession,
   deleteSession,
+  getPendingInterrupt,
   getSessionForUser,
   listHistory,
   listSessions,
+  pendingInterruptForHistory,
   updateSessionTitle,
 } from '../db/chat';
 import { streamCookingChat } from '../agent/stream-chat';
@@ -90,7 +92,15 @@ chatRoutes.get('/api/chat/history', async (c) => {
   const session = await getSessionForUser(c.env.DB, userId, sessionId);
   if (!session) return c.json(fail('Session not found'), 404);
   const messages = await listHistory(c.env.DB, userId, sessionId);
-  return c.json(ok({ sessionId, messages }));
+  const pending = await getPendingInterrupt(c.env.DB, userId, sessionId);
+  const pendingInterrupt = pendingInterruptForHistory(pending);
+  return c.json(
+    ok({
+      sessionId,
+      messages,
+      ...(pendingInterrupt ? { pendingInterrupt } : {}),
+    }),
+  );
 });
 
 chatRoutes.delete('/api/chat/history', async (c) => {

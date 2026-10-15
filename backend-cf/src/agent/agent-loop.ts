@@ -414,8 +414,20 @@ export async function runAgentTurn(
             : undefined,
       });
       await releaseSessionLock(db, input.userId, input.sessionId);
+    } else if (turn.kind === 'interrupt') {
+      await insertMessage(db, {
+        userId: input.userId,
+        sessionId: input.sessionId,
+        role: 'assistant',
+        content: turn.message,
+        responseType: 'interrupt',
+        cardData: {
+          sessionId: turn.data.sessionId,
+          pendingTools: turn.data.pendingTools,
+        },
+      });
+      // interrupt: keep lock + pending
     }
-    // interrupt: keep lock + pending
 
     return turn;
   } catch (error) {
