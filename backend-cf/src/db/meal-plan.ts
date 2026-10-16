@@ -1,5 +1,6 @@
 import { nowUnixSeconds } from '../lib/time';
 import {
+  deletePantryItem,
   findByIngredientId,
   findByNameCi,
   listPantryItems,
@@ -52,6 +53,8 @@ export type MealConfirmShortage = {
   needed: number;
   available: number;
   unit: string;
+  /** Present when pantry matched by name/id but units differ — no silent convert. */
+  reason?: 'unit_mismatch';
 };
 
 export type MealConfirmDeducted = {
@@ -74,9 +77,29 @@ export type MealAvailabilityStatus = 'ok' | 'short' | 'unknown';
 
 export type MealAvailabilityEntry = {
   meal_plan_id: string;
+  serving_date: string;
+  meal_name: string;
+  meal_type: string;
+  recipe_id: string | null;
   status: MealAvailabilityStatus;
   shortages: MealConfirmShortage[];
 };
+
+function mealAvailabilityEntry(
+  plan: MealPlanRow,
+  status: MealAvailabilityStatus,
+  shortages: MealConfirmShortage[],
+): MealAvailabilityEntry {
+  return {
+    meal_plan_id: plan.id,
+    serving_date: plan.serving_date,
+    meal_name: plan.meal_name,
+    meal_type: plan.meal_type,
+    recipe_id: plan.recipe_id,
+    status,
+    shortages,
+  };
+}
 
 export type WeekAvailabilityResult = {
   meals: MealAvailabilityEntry[];
@@ -240,6 +263,19 @@ function findPoolEntry(
   return pool.get(nameKey(ing.name)) ?? null;
 }
 
+/** Normalize unit for comparison; empty → pcs. No conversion tables. */
+export function normalizeUnitKey(unit: string | null | undefined): string {
+  const t = unit?.trim();
+  return (t ? t : 'pcs').toLowerCase();
+}
+
+export function unitsMatch(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  return normalizeUnitKey(a) === normalizeUnitKey(b);
+}
+
 /**
  * Allocate recipe ingredients against a mutable pantry pool (preview / week lights).
  * Mutates `pool` quantities. Does not touch D1.
@@ -268,6 +304,19 @@ export function allocateIngredientsAgainstPool(
         needed,
         available: 0,
         unit,
+      });
+      continue;
+    }
+
+    if (!unitsMatch(unit, entry.unit)) {
+      // available 0 so shopping deficit = full needed (no silent cross-unit credit)
+      shortages.push({
+        ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
+        name: ing.name,
+        needed,
+        available: 0,
+        unit,
+        reason: 'unit_mismatch',
       });
       continue;
     }
@@ -351,30 +400,18 @@ export async function computeWeekAvailability(
 
   for (const plan of plans) {
     if (!ACTIVE_PLAN_STATUSES.has(plan.status)) {
-      meals.push({
-        meal_plan_id: plan.id,
-        status: 'ok',
-        shortages: [],
-      });
+      meals.push(mealAvailabilityEntry(plan, 'ok', []));
       continue;
     }
 
     if (!plan.recipe_id) {
-      meals.push({
-        meal_plan_id: plan.id,
-        status: 'unknown',
-        shortages: [],
-      });
+      meals.push(mealAvailabilityEntry(plan, 'unknown', []));
       continue;
     }
 
     const recipe = await getRecipe(db, userId, plan.recipe_id);
     if (!recipe) {
-      meals.push({
-        meal_plan_id: plan.id,
-        status: 'unknown',
-        shortages: [],
-      });
+      meals.push(mealAvailabilityEntry(plan, 'unknown', []));
       continue;
     }
 
@@ -383,11 +420,9 @@ export async function computeWeekAvailability(
       hasRecipeId: true,
       recipeFound: true,
     });
-    meals.push({
-      meal_plan_id: plan.id,
-      status: result.status,
-      shortages: result.shortages,
-    });
+    meals.push(
+      mealAvailabilityEntry(plan, result.status, result.shortages),
+    );
     if (result.shortages.length > 0) {
       shortfallLists.push(result.shortages);
     }
@@ -596,10 +631,26 @@ export async function confirmMealPlan(
         }
 
         const available = quantityFromRow(pantry.quantity);
+        if (!unitsMatch(unit, pantry.unit)) {
+          shortages.push({
+            ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
+            name: ing.name,
+            needed,
+            available: 0,
+            unit,
+            reason: 'unit_mismatch',
+          });
+          continue;
+        }
+
         const deductQty = Math.min(available, needed);
         const newQty = available - deductQty;
 
-        await updatePantryItem(db, userId, pantry.id, { quantity: newQty });
+        if (newQty <= 0) {
+          await deletePantryItem(db, userId, pantry.id);
+        } else {
+          await updatePantryItem(db, userId, pantry.id, { quantity: newQty });
+        }
 
         if (deductQty > 0) {
           deducted.push({
@@ -607,7 +658,7 @@ export async function confirmMealPlan(
             name: ing.name,
             deducted: deductQty,
             previous_quantity: available,
-            new_quantity: newQty,
+            new_quantity: Math.max(0, newQty),
             unit: pantry.unit ?? unit,
           });
         }

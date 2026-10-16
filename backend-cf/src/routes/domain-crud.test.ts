@@ -743,6 +743,26 @@ function createMockDb() {
             });
             return { meta: { changes: 1 } };
           }
+          if (sql.includes('DELETE FROM meal_plans')) {
+            const id = bound[0] as string;
+            const userId = bound[1] as string;
+            const row = store.mealPlans.get(id);
+            if (!row || row.user_id !== userId) {
+              return { meta: { changes: 0 } };
+            }
+            store.mealPlans.delete(id);
+            return { meta: { changes: 1 } };
+          }
+          if (sql.includes('DELETE FROM pantry_items')) {
+            const id = bound[0] as string;
+            const userId = bound[1] as string;
+            const row = store.pantry.get(id);
+            if (!row || row.user_id !== userId) {
+              return { meta: { changes: 0 } };
+            }
+            store.pantry.delete(id);
+            return { meta: { changes: 1 } };
+          }
           return { meta: { changes: 0 } };
         },
       };
@@ -1377,6 +1397,10 @@ describe('domain CRUD routes', () => {
       data: {
         meals: Array<{
           meal_plan_id: string;
+          serving_date: string;
+          meal_name: string;
+          meal_type: string;
+          recipe_id: string | null;
           status: string;
           shortages: Array<{ name: string }>;
         }>;
@@ -1388,7 +1412,13 @@ describe('domain CRUD routes', () => {
       availBody.data.meals.map((m) => [m.meal_plan_id, m]),
     );
     expect(byId[plan1Body.data.id]?.status).toBe('ok');
+    expect(byId[plan1Body.data.id]?.serving_date).toBe('2026-10-06');
+    expect(byId[plan1Body.data.id]?.meal_name).toBeTruthy();
+    expect(byId[plan1Body.data.id]?.meal_type).toBeTruthy();
     expect(byId[plan2Body.data.id]?.status).toBe('short');
+    expect(byId[plan2Body.data.id]?.serving_date).toBe('2026-10-07');
+    expect(byId[plan2Body.data.id]?.meal_name).toBe('Chicken Bowl');
+    expect(byId[plan2Body.data.id]?.meal_type).toBe('dinner');
     expect(availBody.data.weekShortages.length).toBeGreaterThan(0);
     expect(availBody.data.weekShortages[0].name).toBe('Chicken');
     expect(availBody.data.weekShortages[0].available).toBe(0);
@@ -1409,5 +1439,535 @@ describe('domain CRUD routes', () => {
       env,
     );
     expect(res.status).toBe(400);
+  });
+
+  it('closed-loop: multi-meal shortages stay attributed to each dish', async () => {
+    const headers = {
+      Authorization: await authHeader(USER_A),
+      'Content-Type': 'application/json',
+    };
+
+    const kungPaoRes = await app.request(
+      '/api/recipe',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_name: '宮保雞丁',
+          instructions: ['Stir-fry'],
+          ingredients: [
+            { name: '雞胸肉', quantity: 300, unit: 'g' },
+            { name: '花生', quantity: 50, unit: 'g' },
+          ],
+        }),
+      },
+      env,
+    );
+    const kungPaoBody = (await kungPaoRes.json()) as { data: { id: string } };
+
+    const soupRes = await app.request(
+      '/api/recipe',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_name: '山藥排骨湯',
+          instructions: ['Simmer'],
+          ingredients: [
+            { name: '排骨', quantity: 500, unit: 'g' },
+            { name: '山藥', quantity: 200, unit: 'g' },
+          ],
+        }),
+      },
+      env,
+    );
+    const soupBody = (await soupRes.json()) as { data: { id: string } };
+
+    const planKung = await app.request(
+      '/api/meal-plan',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_type: 'dinner',
+          serving_date: '2026-10-15',
+          recipe_id: kungPaoBody.data.id,
+          meal_name: '宮保雞丁',
+        }),
+      },
+      env,
+    );
+    const planKungBody = (await planKung.json()) as { data: { id: string } };
+
+    const planSoup = await app.request(
+      '/api/meal-plan',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_type: 'dinner',
+          serving_date: '2026-10-16',
+          recipe_id: soupBody.data.id,
+          meal_name: '山藥排骨湯',
+        }),
+      },
+      env,
+    );
+    const planSoupBody = (await planSoup.json()) as { data: { id: string } };
+
+    const availRes = await app.request(
+      '/api/meal-plan/availability?from=2026-10-15&to=2026-10-18',
+      { headers },
+      env,
+    );
+    expect(availRes.status).toBe(200);
+    const availBody = (await availRes.json()) as {
+      data: {
+        meals: Array<{
+          meal_plan_id: string;
+          serving_date: string;
+          meal_name: string;
+          status: string;
+          shortages: Array<{ name: string }>;
+        }>;
+        weekShortages: Array<{ name: string }>;
+      };
+    };
+
+    const byId = Object.fromEntries(
+      availBody.data.meals.map((m) => [m.meal_plan_id, m]),
+    );
+    const kung = byId[planKungBody.data.id]!;
+    const soup = byId[planSoupBody.data.id]!;
+
+    expect(kung.serving_date).toBe('2026-10-15');
+    expect(kung.meal_name).toBe('宮保雞丁');
+    expect(kung.status).toBe('short');
+    expect(soup.serving_date).toBe('2026-10-16');
+    expect(soup.meal_name).toBe('山藥排骨湯');
+    expect(soup.status).toBe('short');
+
+    const kungNames = kung.shortages.map((s) => s.name);
+    const soupNames = soup.shortages.map((s) => s.name);
+    expect(kungNames).toEqual(expect.arrayContaining(['雞胸肉', '花生']));
+    expect(kungNames).not.toContain('排骨');
+    expect(kungNames).not.toContain('山藥');
+    expect(soupNames).toEqual(expect.arrayContaining(['排骨', '山藥']));
+    expect(soupNames).not.toContain('雞胸肉');
+    expect(soupNames).not.toContain('花生');
+
+    const weekNames = availBody.data.weekShortages.map((s) => s.name);
+    expect(weekNames).toEqual(
+      expect.arrayContaining(['雞胸肉', '花生', '排骨', '山藥']),
+    );
+  });
+
+  it('closed-loop: skip/delete meal releases soft-reserve; pantry qty unchanged', async () => {
+    const headers = {
+      Authorization: await authHeader(USER_A),
+      'Content-Type': 'application/json',
+    };
+
+    const recipeRes = await app.request(
+      '/api/recipe',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_name: 'Chicken Bowl',
+          instructions: ['Cook'],
+          ingredients: [{ name: 'Chicken', quantity: 200, unit: 'g' }],
+        }),
+      },
+      env,
+    );
+    const recipeBody = (await recipeRes.json()) as { data: { id: string } };
+
+    await app.request(
+      '/api/pantry-item',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ name: 'Chicken', quantity: 250, unit: 'g' }),
+      },
+      env,
+    );
+
+    const plan1 = await app.request(
+      '/api/meal-plan',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_type: 'dinner',
+          serving_date: '2026-10-06',
+          recipe_id: recipeBody.data.id,
+          meal_name: 'Chicken Bowl',
+        }),
+      },
+      env,
+    );
+    const plan1Body = (await plan1.json()) as { data: { id: string } };
+
+    const plan2 = await app.request(
+      '/api/meal-plan',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_type: 'dinner',
+          serving_date: '2026-10-07',
+          recipe_id: recipeBody.data.id,
+          meal_name: 'Chicken Bowl',
+        }),
+      },
+      env,
+    );
+    const plan2Body = (await plan2.json()) as { data: { id: string } };
+
+    const availBefore = await app.request(
+      '/api/meal-plan/availability?from=2026-10-06&to=2026-10-12',
+      { headers },
+      env,
+    );
+    const beforeBody = (await availBefore.json()) as {
+      data: {
+        meals: Array<{ meal_plan_id: string; status: string }>;
+      };
+    };
+    const beforeById = Object.fromEntries(
+      beforeBody.data.meals.map((m) => [m.meal_plan_id, m]),
+    );
+    expect(beforeById[plan1Body.data.id]?.status).toBe('ok');
+    expect(beforeById[plan2Body.data.id]?.status).toBe('short');
+
+    const pantryBefore = await app.request('/api/pantry-item', { headers }, env);
+    const pantryBeforeBody = (await pantryBefore.json()) as {
+      data: Array<{ name: string; quantity: number }>;
+    };
+    expect(
+      pantryBeforeBody.data.find((p) => p.name === 'Chicken')?.quantity,
+    ).toBe(250);
+
+    const skipRes = await app.request(
+      `/api/meal-plan/${plan1Body.data.id}/skip`,
+      { method: 'POST', headers },
+      env,
+    );
+    expect(skipRes.status).toBe(200);
+
+    const availAfterSkip = await app.request(
+      '/api/meal-plan/availability?from=2026-10-06&to=2026-10-12',
+      { headers },
+      env,
+    );
+    const afterSkipBody = (await availAfterSkip.json()) as {
+      data: {
+        meals: Array<{ meal_plan_id: string; status: string }>;
+      };
+    };
+    const afterSkipById = Object.fromEntries(
+      afterSkipBody.data.meals.map((m) => [m.meal_plan_id, m]),
+    );
+    expect(afterSkipById[plan2Body.data.id]?.status).toBe('ok');
+
+    const pantryAfterSkip = await app.request(
+      '/api/pantry-item',
+      { headers },
+      env,
+    );
+    const pantryAfterSkipBody = (await pantryAfterSkip.json()) as {
+      data: Array<{ name: string; quantity: number }>;
+    };
+    expect(
+      pantryAfterSkipBody.data.find((p) => p.name === 'Chicken')?.quantity,
+    ).toBe(250);
+
+    const delRes = await app.request(
+      `/api/meal-plan/${plan2Body.data.id}`,
+      { method: 'DELETE', headers },
+      env,
+    );
+    expect(delRes.status).toBe(200);
+
+    const availAfterDelete = await app.request(
+      '/api/meal-plan/availability?from=2026-10-06&to=2026-10-12',
+      { headers },
+      env,
+    );
+    const afterDeleteBody = (await availAfterDelete.json()) as {
+      data: { meals: Array<{ meal_plan_id: string }> };
+    };
+    expect(
+      afterDeleteBody.data.meals.some((m) => m.meal_plan_id === plan2Body.data.id),
+    ).toBe(false);
+
+    const pantryAfterDelete = await app.request(
+      '/api/pantry-item',
+      { headers },
+      env,
+    );
+    const pantryAfterDeleteBody = (await pantryAfterDelete.json()) as {
+      data: Array<{ name: string; quantity: number }>;
+    };
+    expect(
+      pantryAfterDeleteBody.data.find((p) => p.name === 'Chicken')?.quantity,
+    ).toBe(250);
+  });
+
+  it('closed-loop: schedule does not deduct; confirm deducts pantry', async () => {
+    const headers = {
+      Authorization: await authHeader(USER_A),
+      'Content-Type': 'application/json',
+    };
+
+    const recipeRes = await app.request(
+      '/api/recipe',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_name: 'Eggs',
+          instructions: ['Fry'],
+          ingredients: [{ name: 'Egg', quantity: 2, unit: 'pcs' }],
+        }),
+      },
+      env,
+    );
+    const recipeBody = (await recipeRes.json()) as { data: { id: string } };
+
+    await app.request(
+      '/api/pantry-item',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ name: 'Egg', quantity: 5, unit: 'pcs' }),
+      },
+      env,
+    );
+
+    const planRes = await app.request(
+      '/api/meal-plan',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_type: 'breakfast',
+          serving_date: '2026-09-21',
+          recipe_id: recipeBody.data.id,
+          meal_name: 'Eggs',
+        }),
+      },
+      env,
+    );
+    const planBody = (await planRes.json()) as { data: { id: string } };
+
+    const pantryAfterPlan = await app.request(
+      '/api/pantry-item',
+      { headers },
+      env,
+    );
+    const afterPlanBody = (await pantryAfterPlan.json()) as {
+      data: Array<{ name: string; quantity: number }>;
+    };
+    expect(afterPlanBody.data.find((p) => p.name === 'Egg')?.quantity).toBe(5);
+
+    const confirmRes = await app.request(
+      `/api/meal-plan/${planBody.data.id}/confirm`,
+      { method: 'POST', headers },
+      env,
+    );
+    expect(confirmRes.status).toBe(200);
+
+    const pantryAfterConfirm = await app.request(
+      '/api/pantry-item',
+      { headers },
+      env,
+    );
+    const afterConfirmBody = (await pantryAfterConfirm.json()) as {
+      data: Array<{ name: string; quantity: number }>;
+    };
+    expect(afterConfirmBody.data.find((p) => p.name === 'Egg')?.quantity).toBe(
+      3,
+    );
+  });
+
+  it('closed-loop: shopping POST merges qty by name+unit on unchecked row', async () => {
+    const headers = {
+      Authorization: await authHeader(USER_A),
+      'Content-Type': 'application/json',
+    };
+
+    const first = await app.request(
+      '/api/shopping-list',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: '蒜頭',
+          quantity: 2,
+          unit: '顆',
+          details: { quantity: 2, unit: '顆', checked: false },
+        }),
+      },
+      env,
+    );
+    expect(first.status).toBe(201);
+
+    const second = await app.request(
+      '/api/shopping-list',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: '蒜頭',
+          quantity: 3,
+          unit: '顆',
+          details: { quantity: 3, unit: '顆', checked: false },
+        }),
+      },
+      env,
+    );
+    expect(second.status).toBe(201);
+    const secondBody = (await second.json()) as {
+      data: { quantity: number; name: string };
+    };
+    expect(secondBody.data.quantity).toBe(5);
+
+    const list = await app.request('/api/shopping-list', { headers }, env);
+    const listBody = (await list.json()) as {
+      data: Array<{ name: string; quantity: number; unit: string }>;
+    };
+    const garlic = listBody.data.filter((i) => i.name === '蒜頭');
+    expect(garlic).toHaveLength(1);
+    expect(garlic[0].quantity).toBe(5);
+    expect(garlic[0].unit).toBe('顆');
+  });
+
+  it('closed-loop: skip meal leaves shopping list unchanged (v1)', async () => {
+    const headers = {
+      Authorization: await authHeader(USER_A),
+      'Content-Type': 'application/json',
+    };
+
+    await app.request(
+      '/api/shopping-list',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: '青木瓜',
+          quantity: 1,
+          unit: '個',
+          details: { quantity: 1, unit: '個', checked: false },
+        }),
+      },
+      env,
+    );
+
+    const recipeRes = await app.request(
+      '/api/recipe',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_name: '青木瓜排骨湯',
+          instructions: ['Simmer'],
+          ingredients: [{ name: '青木瓜', quantity: 1, unit: '個' }],
+        }),
+      },
+      env,
+    );
+    const recipeBody = (await recipeRes.json()) as { data: { id: string } };
+
+    const planRes = await app.request(
+      '/api/meal-plan',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_type: 'dinner',
+          serving_date: '2026-10-17',
+          recipe_id: recipeBody.data.id,
+          meal_name: '青木瓜排骨湯',
+        }),
+      },
+      env,
+    );
+    const planBody = (await planRes.json()) as { data: { id: string } };
+
+    const skipRes = await app.request(
+      `/api/meal-plan/${planBody.data.id}/skip`,
+      { method: 'POST', headers },
+      env,
+    );
+    expect(skipRes.status).toBe(200);
+
+    const list = await app.request('/api/shopping-list', { headers }, env);
+    const listBody = (await list.json()) as {
+      data: Array<{ name: string; quantity: number }>;
+    };
+    expect(listBody.data.find((i) => i.name === '青木瓜')?.quantity).toBe(1);
+  });
+
+  it('closed-loop: confirm deletes pantry row when qty reaches 0', async () => {
+    const headers = {
+      Authorization: await authHeader(USER_A),
+      'Content-Type': 'application/json',
+    };
+
+    const recipeRes = await app.request(
+      '/api/recipe',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_name: 'Eggs',
+          instructions: ['Fry'],
+          ingredients: [{ name: 'Egg', quantity: 3, unit: 'pcs' }],
+        }),
+      },
+      env,
+    );
+    const recipeBody = (await recipeRes.json()) as { data: { id: string } };
+
+    await app.request(
+      '/api/pantry-item',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ name: 'Egg', quantity: 3, unit: 'pcs' }),
+      },
+      env,
+    );
+
+    const planRes = await app.request(
+      '/api/meal-plan',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          meal_type: 'breakfast',
+          serving_date: '2026-09-22',
+          recipe_id: recipeBody.data.id,
+          meal_name: 'Eggs',
+        }),
+      },
+      env,
+    );
+    const planBody = (await planRes.json()) as { data: { id: string } };
+
+    const confirmRes = await app.request(
+      `/api/meal-plan/${planBody.data.id}/confirm`,
+      { method: 'POST', headers },
+      env,
+    );
+    expect(confirmRes.status).toBe(200);
+
+    const pantryList = await app.request('/api/pantry-item', { headers }, env);
+    const pantryBody = (await pantryList.json()) as {
+      data: Array<{ name: string; quantity: number }>;
+    };
+    expect(pantryBody.data.find((p) => p.name === 'Egg')).toBeUndefined();
   });
 });

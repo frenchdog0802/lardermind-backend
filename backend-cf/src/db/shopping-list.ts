@@ -220,6 +220,7 @@ export async function createShoppingListItem(
   const checked = input.checked ? 1 : 0;
   // Check no longer auto-writes pantry; flag stays 0 until batch sync.
   const hasBeenAdded = 0;
+  const unit = input.unit?.trim() || 'pcs';
 
   await db
     .prepare(
@@ -232,7 +233,7 @@ export async function createShoppingListItem(
       userId,
       input.name,
       String(input.quantity),
-      input.unit,
+      unit,
       checked,
       input.ingredient_id ?? null,
       hasBeenAdded,
@@ -244,6 +245,63 @@ export async function createShoppingListItem(
   const row = await getShoppingListItem(db, userId, id);
   if (!row) throw new Error('Failed to load created shopping list item');
   return row;
+}
+
+function normalizeShoppingUnit(unit: string | null | undefined): string {
+  const t = unit?.trim();
+  return t ? t : 'pcs';
+}
+
+/** Unchecked row with same CI name + unit (merge target for add). */
+export async function findUncheckedByNameUnitCi(
+  db: D1Database,
+  userId: string,
+  name: string,
+  unit: string,
+): Promise<ShoppingListItemRow | null> {
+  const rows = await listShoppingListItems(db, userId);
+  const nameKey = name.trim().toLowerCase();
+  const unitKey = normalizeShoppingUnit(unit).toLowerCase();
+  return (
+    rows.find(
+      (r) =>
+        r.checked === 0 &&
+        r.name.trim().toLowerCase() === nameKey &&
+        normalizeShoppingUnit(r.unit).toLowerCase() === unitKey,
+    ) ?? null
+  );
+}
+
+/**
+ * Upsert by case-insensitive name + unit onto an unchecked row.
+ * Checked-only matches create a new unchecked row (do not revive checked lines).
+ */
+export async function mergeAddShoppingListItem(
+  db: D1Database,
+  userId: string,
+  input: ShoppingListItemInput,
+): Promise<{ item: ShoppingListItemRow; merged: boolean }> {
+  const unit = normalizeShoppingUnit(input.unit);
+  const existing = await findUncheckedByNameUnitCi(
+    db,
+    userId,
+    input.name,
+    unit,
+  );
+  if (!existing) {
+    const item = await createShoppingListItem(db, userId, { ...input, unit });
+    return { item, merged: false };
+  }
+
+  const existingQty = quantityFromRow(existing.quantity);
+  const updated = await updateShoppingListItem(db, userId, existing.id, {
+    quantity: existingQty + input.quantity,
+    unit,
+  });
+  if (!updated) {
+    throw new Error('Failed to merge shopping list item');
+  }
+  return { item: updated, merged: true };
 }
 
 export async function updateShoppingListItem(

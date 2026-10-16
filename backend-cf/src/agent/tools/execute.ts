@@ -31,7 +31,7 @@ import {
   upsertPreferences,
 } from '../../db/preferences';
 import {
-  createShoppingListItem,
+  mergeAddShoppingListItem,
   toShoppingListItemDto,
 } from '../../db/shopping-list';
 import {
@@ -599,15 +599,25 @@ export async function executeTool(
     case 'addItemsToShoppingList': {
       const items = itemListFromArgs(args);
       const created = [];
+      let mergedCount = 0;
       for (const item of items) {
-        const row = await createShoppingListItem(db, userId, item);
+        const { item: row, merged } = await mergeAddShoppingListItem(
+          db,
+          userId,
+          item,
+        );
+        if (merged) mergedCount += 1;
         created.push(toShoppingListItemDto(row));
       }
       const cardType = TOOL_CARD_TYPES.addItemsToShoppingList!;
       return {
-        content: JSON.stringify({ items: created }),
+        content: JSON.stringify({ items: created, mergedCount }),
         cardType,
-        cardData: { items: created, itemsAdded: created.length },
+        cardData: {
+          items: created,
+          itemsAdded: created.length,
+          mergedCount,
+        },
       };
     }
     case 'createRecipe': {

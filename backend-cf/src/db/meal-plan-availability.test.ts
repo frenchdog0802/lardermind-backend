@@ -168,4 +168,64 @@ describe('softReserveFromAllocatedPool', () => {
       to: '2026-10-29',
     });
   });
+
+  it('does not silently allocate across mismatched units (包 vs g)', () => {
+    const pool = buildPantryPool([
+      pantry({
+        id: 'p1',
+        name: '排骨',
+        quantity: '10',
+        unit: '包',
+      }),
+    ]);
+    const result = allocateIngredientsAgainstPool(
+      [ing({ name: '排骨', quantity: '500', unit: 'g' })],
+      pool,
+    );
+    expect(result.status).toBe('short');
+    expect(result.shortages[0]).toMatchObject({
+      name: '排骨',
+      needed: 500,
+      available: 0,
+      unit: 'g',
+      reason: 'unit_mismatch',
+    });
+    expect(pool.get('name:排骨')?.quantity).toBe(10);
+  });
+
+  it('closed-loop: dropping a meal from allocation restores available (cancel model)', () => {
+    const rows = [
+      pantry({
+        id: 'p1',
+        name: 'Chicken',
+        quantity: '250',
+        unit: 'g',
+      }),
+    ];
+    const withTwoMeals = buildPantryPool(rows);
+    allocateIngredientsAgainstPool(
+      [ing({ name: 'Chicken', quantity: '200', unit: 'g' })],
+      withTwoMeals,
+    );
+    allocateIngredientsAgainstPool(
+      [ing({ name: 'Chicken', quantity: '200', unit: 'g' })],
+      withTwoMeals,
+    );
+    expect(softReserveFromAllocatedPool(rows, withTwoMeals)[0]).toMatchObject({
+      on_hand: 250,
+      reserved: 250,
+      available: 0,
+    });
+
+    const afterCancelFirst = buildPantryPool(rows);
+    allocateIngredientsAgainstPool(
+      [ing({ name: 'Chicken', quantity: '200', unit: 'g' })],
+      afterCancelFirst,
+    );
+    expect(softReserveFromAllocatedPool(rows, afterCancelFirst)[0]).toMatchObject({
+      on_hand: 250,
+      reserved: 200,
+      available: 50,
+    });
+  });
 });

@@ -277,7 +277,7 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     function: {
       name: 'getMealPlanAvailability',
       description:
-        'Read-only: week-allocate pantry against planned meals; return per-meal status and aggregated shortages (for shopping). Does not write pantry.',
+        'Read-only: week-allocate pantry against planned meals. Returns meals[] each with serving_date, meal_name, meal_type, status, and that meal\'s shortages — narrate per-meal first. weekShortages/shoppingHints are a deduped aggregate for an optional shopping offer only. Does not write pantry.',
       parameters: {
         type: 'object',
         properties: {

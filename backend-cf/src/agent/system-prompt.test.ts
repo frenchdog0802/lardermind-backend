@@ -45,4 +45,27 @@ describe('buildCookingAssistantSystemPrompt', () => {
     expect(prompt).toMatch(/getMealPlanAvailability/);
     expect(prompt).toMatch(/addItemsToShoppingList/);
   });
+
+  it('requires per-meal shortage reporting before week shopping union', () => {
+    const prompt = buildCookingAssistantSystemPrompt({
+      todayLocalDate: '2026-10-11',
+    });
+    expect(prompt).toMatch(/per meal first/i);
+    expect(prompt).toMatch(/Never put meal A's shortages under meal B/i);
+    expect(prompt).toMatch(/Do not invent doubt/i);
+    expect(prompt).toMatch(/after.*per-meal breakdown|combined cart/i);
+  });
+
+  it('requires getPreferences before plan and covers fuzz / unit / slot warn', () => {
+    const prompt = buildCookingAssistantSystemPrompt({
+      todayLocalDate: '2026-10-11',
+    });
+    expect(prompt).toMatch(/getPreferences/);
+    expect(prompt).toMatch(/Honor allergies/i);
+    expect(prompt).toMatch(/at most 28/i);
+    expect(prompt).toMatch(/Refuse non-food/i);
+    expect(prompt).toMatch(/unit_mismatch|Do not invent unit conversions/i);
+    expect(prompt).toMatch(/warn.*slot|same serving_date/i);
+    expect(prompt).toMatch(/shopping list lines were removed/i);
+  });
 });

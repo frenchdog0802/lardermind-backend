@@ -5,7 +5,7 @@ import type { AuthVariables } from '../middleware/auth';
 import { requireAuth } from '../middleware/auth';
 import {
   assertBatchSize,
-  createShoppingListItem,
+  mergeAddShoppingListItem,
   deleteShoppingListItem,
   getShoppingListItem,
   listShoppingListItems,
@@ -207,7 +207,11 @@ shoppingListRoutes.post('/api/shopping-list', async (c) => {
   const parsed = parseCreateInput(body);
   if (!parsed.ok) return c.json(fail(parsed.message), 400);
 
-  const row = await createShoppingListItem(c.env.DB, userId, parsed.value);
+  const { item: row } = await mergeAddShoppingListItem(
+    c.env.DB,
+    userId,
+    parsed.value,
+  );
   return c.json(ok(toShoppingListItemDto(row)), 201);
 });
 

@@ -89,12 +89,18 @@ Response `data`:
 {
   meals: Array<{
     meal_plan_id: string;
+    serving_date: string;
+    meal_name: string;
+    meal_type: string;
+    recipe_id: string | null;
     status: 'ok' | 'short' | 'unknown';
     shortages: MealConfirmShortage[];
   }>;
   weekShortages: MealConfirmShortage[];
 }
 ```
+
+Chat / agents must narrate `meals[]` shortages by `serving_date` + `meal_name` before offering `weekShortages` as a combined shopping list.
 
 Auth: `requireAuth`. No writes.
 
