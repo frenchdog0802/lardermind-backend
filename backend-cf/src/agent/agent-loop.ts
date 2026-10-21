@@ -26,7 +26,8 @@ import {
   buildCookingAssistantSystemPrompt,
   resolveTodayLocalDate,
 } from './system-prompt';
-import { COOKING_TOOLS } from './tools/definitions';
+import { COOKING_TOOLS, cookingToolsForGuest } from './tools/definitions';
+import { GUEST_TOOL_ALLOWLIST, isGuestAllowedTool } from './tools/guest-allowlist';
 import { aggregateCard, type ToolCardEvent } from './tools/cards';
 import { executeTool, type ToolExecResult } from './tools/execute';
 import { isMutatingTool, toPendingTools } from './tools/hitl';
@@ -35,6 +36,7 @@ import {
   MUTATION_NO_TOOL_FALLBACK,
   MUTATION_TOOL_NUDGE,
 } from './tools/mutating-intent';
+import { isGuestUserRow } from '../db/guests';
 
 export type ChatResponsePayload = {
   type: string;
@@ -156,6 +158,8 @@ async function appendToolResults(
   }
 }
 
+// note: appendToolResults uses options.execute when provided via runToolLoop
+
 async function finalizeText(
   env: Env,
   messages: LlmMessage[],
@@ -207,18 +211,34 @@ async function runToolLoop(
   complete: CompleteChatFn,
   execute: ExecuteToolFn,
   originalUserMessage: string,
+  options: { isGuest?: boolean } = {},
 ): Promise<AgentTurnResult> {
   const cardEvents: ToolCardEvent[] = [];
   const maxRounds = recursionLimit(env);
   let mutationNudgeUsed = false;
   let toolChoice: 'auto' | 'required' = 'auto';
   const mutatingIntent = looksLikeMutatingUserRequest(originalUserMessage);
+  const tools = options.isGuest
+    ? cookingToolsForGuest(GUEST_TOOL_ALLOWLIST)
+    : COOKING_TOOLS;
+  const runExecute: ExecuteToolFn = async (database, uid, name, args) => {
+    if (options.isGuest && !isGuestAllowedTool(name)) {
+      return {
+        content: JSON.stringify({
+          error: 'signup_required',
+          message:
+            'Sign up to save your kitchen and use planning, shopping, or other advanced tools.',
+        }),
+      };
+    }
+    return execute(database, uid, name, args);
+  };
 
   for (let round = 0; round < maxRounds; round++) {
     const result = await complete({
       env,
       messages,
-      tools: COOKING_TOOLS,
+      tools,
       toolChoice,
     });
     toolChoice = 'auto';
@@ -287,7 +307,7 @@ async function runToolLoop(
       messages,
       result.toolCalls,
       cardEvents,
-      { execute },
+      { execute: runExecute },
     );
   }
 
@@ -312,6 +332,7 @@ export async function runAgentTurn(
     clientLocalDate?: string;
     /** When false, skip quota increment (not used for resume). */
     chargeQuota?: boolean;
+    isGuest?: boolean;
   },
   deps?: AgentDeps,
 ): Promise<AgentTurnResult> {
@@ -346,8 +367,11 @@ export async function runAgentTurn(
   }
 
   try {
+    const user = await findUserById(db, input.userId);
+    const isGuest =
+      input.isGuest === true || isGuestUserRow(user ?? null);
+
     if (chargeQuota) {
-      const user = await findUserById(db, input.userId);
       const entitlement = await resolveEntitlement(
         db,
         input.userId,
@@ -357,6 +381,7 @@ export async function runAgentTurn(
         await checkAndIncrementAiMessage(db, input.userId, {
           isPro: entitlement.isPro,
           isAdmin: entitlement.isAdmin,
+          isGuest,
         });
       } catch (error) {
         if (error instanceof QuotaExceededError) {
@@ -399,6 +424,7 @@ export async function runAgentTurn(
       complete,
       execute,
       input.message,
+      { isGuest },
     );
 
     if (turn.kind === 'complete') {

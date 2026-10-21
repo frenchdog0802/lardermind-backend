@@ -2,10 +2,10 @@
 # LarderMind — iOS（TestFlight → App Store）上线 Todo
 
 **Created:** 2026-09-09  
-**Updated:** 2026-10-15  
+**Updated:** 2026-10-20  
 **Goal:** **iOS 先行**；先 TestFlight / 家人测，再视情况公开上架 App Store  
 **生产 API：** Cloudflare Workers（`backend-cf`）  
-**订阅：** Pro 一起做（App Store / StoreKit）  
+**订阅：** Pro 一起做（App Store / StoreKit）— **但首包 TestFlight 不挡在 IAP 之后**  
 **功能范围：** 不冻结  
 **Android / Play：** 本轮延后 ⏭  
 **长期目标托管：** Cloudflare（Pages / Workers / D1 / …）— 见 [architecture/cloudflare-target.md](./architecture/cloudflare-target.md)  
@@ -13,15 +13,63 @@
 
 > 状态约定：`[ ]` 未开始 · `[~]` 进行中 · `[x]` 完成 · `⏭` 本轮可延后
 
+---
+
+## 開始測 App — 鎖定順序（2026-10-20）
+
+> **現在開始測 App。** 付款／訂閱 **不要** 插在首個 TestFlight 之前。  
+> Web Stripe ≠ App 內付款；iOS Pro 必須走 App Store IAP。
+
+| 步驟 | 做什麼 | 測什麼 | 不測什麼 |
+|------|--------|--------|----------|
+| **1** | 上 **TestFlight**（EAS iOS 簽包 → ASC → 邀請安裝） | 登入／註冊、聊天、庫存、購物、菜譜、餐計劃、殺進程重開 | **App 內真付款**（訂閱頁可仍是 stub／mock） |
+| **2** | ASC 建訂閱商品 + 接真 `react-native-iap` + 後端驗 Apple 收據 | （開發／Sandbox 準備） | 正式扣款 |
+| **3** | 再發 TestFlight build，用 Sandbox／TestFlight 帳號測 IAP | 購買、恢復、續訂、取消、Pro 狀態 | 真卡扣款（Sandbox 不會真扣） |
+
+### 步驟 1 當前 checklist（立刻做）
+
+- [x] `mobile/eas.json` production／preview／development 的 `EXPO_PUBLIC_API_BASE_URL` → **staging** Worker（2026-10-20）
+- [x] EAS 帳號已登入（`bertjiayu`）；專案 `@bertjiayu/PantryApp`（slug 須與 app.json 一致）
+- [x] Expo / EAS iOS 憑證 + `eas build -p ios --profile production --auto-submit`（2026-10-20）
+- [x] Binary 已上傳 App Store Connect（Apple 處理中 → TestFlight）
+- [ ] Apple 處理完成後：在 TestFlight 補齊合規問題（若有）、加 Internal／External 測試者
+- [ ] 測試者安裝 → 手測主路徑（見 Phase 4；**跳過**「真購買／恢復 Pro」直到步驟 3）
+
+**TestFlight 建置頁：** https://appstoreconnect.apple.com/apps/6823048274/testflight/ios  
+
+**之後重打／重傳（`mobile/`）：**
+
+```bash
+cd mobile
+npx eas-cli@25.2.0 build -p ios --profile production --auto-submit
+```
+
+### 步驟 2–3（TestFlight 主功能穩定後再做）
+
+- [ ] ASC 訂閱：`com.lardermind.pro.monthly` / `com.lardermind.pro.yearly`
+- [ ] 重寫 `mobile/.../iapService`：真 StoreKit（去掉 mock）
+- [ ] 後端 `validate-receipt` / `sync`（`platform=ios`）
+- [ ] TestFlight 再測購買／恢復／續訂（Sandbox）
+
+### Cloudflare 環境（已就緒，給 App 指 API 用）
+
+| 環境 | Worker | 觸發 |
+|------|--------|------|
+| Staging | `https://lardermind-api-staging.lardermind.workers.dev` | push `dev`／`develop`，或 Actions 手動選 staging |
+| Production | `https://lardermind-api.lardermind.workers.dev` | push `main`／`master` |
+
+- Staging secrets：本機 `backend-cf/.env.staging` + `wrangler secret bulk .env.staging --env staging`（勿 commit；勿含已在 `wrangler.toml` `[vars]` 的 key，例如 `FRONTEND_URL`）
+
 ### 已拍板（Phase 0）
 
 | 项 | 决定 |
 |----|------|
 | 首发平台 | **iOS**（先 TestFlight / 家人用；公开 App Store 可选下一阶段） |
-| 首发模式 | **Pro 订阅一起上**（App Store In-App Purchase / StoreKit） |
+| 首发模式 | **Pro 订阅一起上**（App Store In-App Purchase / StoreKit）— 工程上 **先 TF 主功能，后 IAP** |
 | 生产 API | **Cloudflare Workers `backend-cf`** |
 | 功能范围 | **不冻结** — 不主动砍功能；「较低优先级」仅作参考 |
 | Android / Play | **延后**（搞完 iOS 再做） |
+| App 测试顺序 | **① TestFlight 主功能 → ② ASC+StoreKit+收據 → ③ TF 測付款** |
 
 ---
 
@@ -86,7 +134,9 @@
 
 ## Phase 2 — 真机 IAP（StoreKit）
 
-> TestFlight 若要测真实订阅，需在 App Store Connect 建好订阅商品 + Sandbox / TestFlight 测试账号。
+> **排在步驟 1（首個 TestFlight 主功能）之後。**  
+> TestFlight 若要测真实订阅，需在 App Store Connect 建好订阅商品 + Sandbox / TestFlight 测试账号。  
+> Web Stripe 只用于 Web；**不能**代替 App 内 IAP。
 
 - [ ] App Store Connect 创建订阅：`com.lardermind.pro.monthly` / `com.lardermind.pro.yearly`
 - [ ] 重写 `mobile/src/services/iapService.ts`：接真 `react-native-iap`（iOS StoreKit；去掉 mock）
@@ -133,13 +183,14 @@
 
 ---
 
-## Phase 5 — TestFlight 内测（本轮主目标）
+## Phase 5 — TestFlight 内测（本轮主目标 = 步驟 1）
 
 - [ ] 上传 build 到 App Store Connect → TestFlight
 - [ ] 通过 TestFlight 合规 / 出口合规等必要问题
 - [ ] 邀请家人安装 → 安装 LarderMind
-- [ ] 收集反馈：闪退、登录、聊天、购买
+- [ ] 收集反馈：闪退、登录、聊天（**首轮不要求购买**）
 - [ ] 修完再发新 build 迭代
+- [ ] （步驟 3）IAP 接好后再测：购买 / 恢复 / 续订
 
 ---
 
@@ -181,11 +232,12 @@
 
 | 里程碑 | 目标 |
 |--------|------|
-| 生产 API + 冒烟 | 先完成 |
-| Apple Developer + ASC App + EAS iOS 签包 | 紧接着 |
-| StoreKit / 订阅沙盒打通 | 内测前 |
-| 首个 TestFlight 包给家人用 | 本轮主目标 |
-| TestFlight 稳定迭代 | 持续 |
+| CF staging + production API | [x] Worker／D1／R2／secrets 已分环境（2026-10-20） |
+| Apple Developer + ASC App | [x] |
+| EAS iOS 签包 → **首个 TestFlight**（主功能，IAP 可 stub） | [x] binary 已上传 ASC（2026-10-20）；等 Apple 处理 + 邀请安装 |
+| TestFlight 稳定迭代（登录／聊天／库存等） | **← 現在** |
+| ASC 订阅商品 + StoreKit + 后端验收据 | 步骤 1 之后 |
+| TestFlight 测购买／恢复／续订（Sandbox） | 步骤 2 之后 |
 | （可选）正式提审 App Store | 视情况 |
 | Android / Play | iOS 稳定后再排 |
 
@@ -206,10 +258,11 @@
 
 ## Notes
 
+- **測 App 鎖定順序：** ① TestFlight 主功能 → ② ASC+StoreKit+收據 → ③ TF 測付款（見文首「開始測 App」）。
 - 本轮主路径：**App Store Connect → EAS iOS → TestFlight → 家人安装**。
 - App 内解锁 Pro 必须走 **App Store IAP**，不能只用 Stripe 替代。
 - iOS 签包依赖 Apple Developer + EAS；本机 Windows 不能本地打 iOS，用 **EAS 云端构建**。
 - 当前 `iapService` 仍是 mock；接真 StoreKit 前，TestFlight 也能先测主功能（订阅页可能仍是 stub）。
 - **Android / Play：搞完 iOS 再来。**
-- `PROJECT_STATUS.md` 偏旧；以本文件 Phase 0 为准。
+- `PROJECT_STATUS.md` 偏旧；以本文件「開始測 App」+ Phase 0 为准。
 <!-- AIGC END -->

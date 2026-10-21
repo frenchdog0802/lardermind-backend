@@ -264,23 +264,24 @@ function createMockDb() {
               dislikes_json: dislikes,
               likes_json: likes,
               dietary_restrictions_json: dietary,
+              assume_basic_seasonings: 1,
               created_at: createdAt,
               updated_at: updatedAt,
             });
             return { meta: { changes: 1 } };
           }
           if (sql.includes('UPDATE user_preferences')) {
-            const [
-              householdNotes,
-              measurementUnit,
-              notes,
-              allergies,
-              dislikes,
-              likes,
-              dietary,
-              updatedAt,
-              userId,
-            ] = bound as [string, string, string, string, string, string, string, number, string];
+            const hasAssume = sql.includes('assume_basic_seasonings');
+            const householdNotes = bound[0] as string;
+            const measurementUnit = bound[1] as string;
+            const notes = bound[2] as string;
+            const allergies = bound[3] as string;
+            const dislikes = bound[4] as string;
+            const likes = bound[5] as string;
+            const dietary = bound[6] as string;
+            const assume = hasAssume ? Number(bound[7]) : 1;
+            const updatedAt = (hasAssume ? bound[8] : bound[7]) as number;
+            const userId = (hasAssume ? bound[9] : bound[8]) as string;
             const row = [...store.preferences.values()].find(
               (r) => r.user_id === userId,
             );
@@ -294,6 +295,7 @@ function createMockDb() {
               dislikes_json: dislikes,
               likes_json: likes,
               dietary_restrictions_json: dietary,
+              assume_basic_seasonings: assume,
               updated_at: updatedAt,
             });
             return { meta: { changes: 1 } };
@@ -816,10 +818,15 @@ describe('domain CRUD routes', () => {
     const getRes = await app.request('/api/user-preferences', { headers }, env);
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as {
-      data: { allergies: string[]; measurementUnit: string };
+      data: {
+        allergies: string[];
+        measurementUnit: string;
+        assumeBasicSeasonings: boolean;
+      };
     };
     expect(getBody.data.allergies).toEqual([]);
     expect(getBody.data.measurementUnit).toBe('metric');
+    expect(getBody.data.assumeBasicSeasonings).toBe(true);
 
     const putRes = await app.request(
       '/api/user-preferences',
@@ -830,17 +837,24 @@ describe('domain CRUD routes', () => {
           allergies: ['peanut'],
           measurementUnit: 'imperial',
           householdNotes: 'No nuts',
+          assumeBasicSeasonings: false,
         }),
       },
       env,
     );
     expect(putRes.status).toBe(200);
     const putBody = (await putRes.json()) as {
-      data: { allergies: string[]; measurementUnit: string; householdNotes: string };
+      data: {
+        allergies: string[];
+        measurementUnit: string;
+        householdNotes: string;
+        assumeBasicSeasonings: boolean;
+      };
     };
     expect(putBody.data.allergies).toEqual(['peanut']);
     expect(putBody.data.measurementUnit).toBe('imperial');
     expect(putBody.data.householdNotes).toBe('No nuts');
+    expect(putBody.data.assumeBasicSeasonings).toBe(false);
   });
 
   it('creates and lists shopping list items', async () => {

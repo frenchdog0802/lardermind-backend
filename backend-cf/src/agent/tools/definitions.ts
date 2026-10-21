@@ -304,6 +304,11 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
           householdNotes: { type: 'string' },
           measurementUnit: { type: 'string', enum: ['metric', 'imperial'] },
           notes: { type: 'string' },
+          assumeBasicSeasonings: {
+            type: 'boolean',
+            description:
+              'When true, recipes missing only default staples (oil, salt, soy, etc.) are conditionally cookable.',
+          },
         },
       },
     },
@@ -312,4 +317,10 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
 
 export function listToolNames(): string[] {
   return COOKING_TOOLS.map((t) => t.function.name);
+}
+
+export function cookingToolsForGuest(
+  allowlist: Set<string>,
+): typeof COOKING_TOOLS {
+  return COOKING_TOOLS.filter((t) => allowlist.has(t.function.name));
 }

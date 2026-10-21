@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { ok, fail } from '../lib/api-response';
 import type { Env } from '../env';
 import type { AuthVariables } from '../middleware/auth';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireNonGuest } from '../middleware/auth';
 import { findUserById } from '../db/users';
 import { resolveEntitlement } from '../db/subscriptions';
 import {
@@ -22,7 +22,7 @@ export const uploadRoutes = new Hono<{
   Variables: AuthVariables;
 }>();
 
-uploadRoutes.use('/api/upload/*', requireAuth);
+uploadRoutes.use('/api/upload/*', requireAuth, requireNonGuest);
 
 uploadRoutes.post('/api/upload/image', async (c) => {
   const userId = c.get('userId');

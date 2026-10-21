@@ -10,6 +10,8 @@ export type UserPreferencesRow = {
   dislikes_json: string | null;
   likes_json: string | null;
   dietary_restrictions_json: string | null;
+  /** 1 = on, 0 = off; null/missing treated as on (default). */
+  assume_basic_seasonings?: number | null;
   created_at: number | null;
   updated_at: number | null;
 };
@@ -23,6 +25,7 @@ export type UserPreferencesDto = {
   householdNotes: string;
   measurementUnit: 'metric' | 'imperial';
   notes: string;
+  assumeBasicSeasonings: boolean;
 };
 
 export type UserPreferencesInput = Partial<{
@@ -33,6 +36,7 @@ export type UserPreferencesInput = Partial<{
   householdNotes: string;
   measurementUnit: string;
   notes: string;
+  assumeBasicSeasonings: boolean;
 }>;
 
 function parseJsonArray(raw: string | null): string[] {
@@ -47,6 +51,16 @@ function parseJsonArray(raw: string | null): string[] {
   }
 }
 
+/** Default ON when column missing or null. */
+export function readAssumeBasicSeasonings(
+  row: Pick<UserPreferencesRow, 'assume_basic_seasonings'> | null | undefined,
+): boolean {
+  if (!row) return true;
+  const v = row.assume_basic_seasonings;
+  if (v === null || v === undefined) return true;
+  return Number(v) !== 0;
+}
+
 export function toPreferencesDto(row: UserPreferencesRow): UserPreferencesDto {
   return {
     id: row.id,
@@ -58,6 +72,7 @@ export function toPreferencesDto(row: UserPreferencesRow): UserPreferencesDto {
     measurementUnit:
       row.measurement_unit === 'imperial' ? 'imperial' : 'metric',
     notes: row.notes ?? '',
+    assumeBasicSeasonings: readAssumeBasicSeasonings(row),
   };
 }
 
@@ -85,8 +100,8 @@ export async function getOrCreatePreferences(
       `INSERT INTO user_preferences
         (id, user_id, household_notes, measurement_unit, notes,
          allergies_json, dislikes_json, likes_json, dietary_restrictions_json,
-         created_at, updated_at)
-       VALUES (?, ?, '', 'metric', '', '[]', '[]', '[]', '[]', ?, ?)`,
+         assume_basic_seasonings, created_at, updated_at)
+       VALUES (?, ?, '', 'metric', '', '[]', '[]', '[]', '[]', 1, ?, ?)`,
     )
     .bind(id, userId, now, now)
     .run();
@@ -132,13 +147,22 @@ export async function upsertPreferences(
       : (existing.measurement_unit ?? 'metric');
   const notes =
     input.notes !== undefined ? input.notes : (existing.notes ?? '');
+  const assumeBasicSeasonings =
+    input.assumeBasicSeasonings !== undefined
+      ? input.assumeBasicSeasonings
+        ? 1
+        : 0
+      : readAssumeBasicSeasonings(existing)
+        ? 1
+        : 0;
 
   await db
     .prepare(
       `UPDATE user_preferences
        SET household_notes = ?, measurement_unit = ?, notes = ?,
            allergies_json = ?, dislikes_json = ?, likes_json = ?,
-           dietary_restrictions_json = ?, updated_at = ?
+           dietary_restrictions_json = ?, assume_basic_seasonings = ?,
+           updated_at = ?
        WHERE user_id = ?`,
     )
     .bind(
@@ -149,6 +173,7 @@ export async function upsertPreferences(
       dislikes,
       likes,
       dietaryRestrictions,
+      assumeBasicSeasonings,
       now,
       userId,
     )

@@ -22,11 +22,15 @@ import {
   createMealPlan,
   defaultSoftReserveRange,
   listMealPlans,
+  normalizeUnitKey,
   toMealPlanDto,
+  unitsMatch,
   type MealConfirmShortage,
+  type PantrySoftReserveEntry,
 } from '../../db/meal-plan';
 import {
   getOrCreatePreferences,
+  readAssumeBasicSeasonings,
   toPreferencesDto,
   upsertPreferences,
 } from '../../db/preferences';
@@ -35,10 +39,118 @@ import {
   toShoppingListItemDto,
 } from '../../db/shopping-list';
 import {
+  convertQuantity,
+  findConversion,
+  listConversionsForUser,
+  type UnitConversionRow,
+} from '../../db/unit-conversions';
+import {
   mealPlanUpdatedCardData,
+  mealSuggestionsCardData,
   recipeCreatedCardData,
   TOOL_CARD_TYPES,
+  type DefineUnitAction,
 } from './cards';
+import { normalizeName } from './names';
+import {
+  classifyCookStatus,
+  conditionalSeasonings,
+  missingMains,
+} from './seasonings';
+
+const DEFINE_UNIT_ACTION_CAP = 5;
+
+type StockLot = { unit: string; available: number; displayName: string };
+
+function buildStockByName(
+  soft: PantrySoftReserveEntry[],
+): Map<string, StockLot[]> {
+  const byName = new Map<string, StockLot[]>();
+  for (const s of soft) {
+    const key = normalizeName(s.name);
+    if (!key) continue;
+    const list = byName.get(key) ?? [];
+    list.push({
+      unit: s.unit,
+      available: s.available,
+      displayName: s.name,
+    });
+    byName.set(key, list);
+  }
+  return byName;
+}
+
+function actionKey(a: DefineUnitAction): string {
+  return `${normalizeName(a.item)}|${normalizeUnitKey(a.from_unit)}|${normalizeUnitKey(a.to_unit)}`;
+}
+
+/** Compare one recipe ingredient against pantry lots (unit-aware). */
+export function matchIngredientAgainstStock(opts: {
+  ingredientName: string;
+  needed: number;
+  needUnit: string;
+  lots: StockLot[];
+  conversions: UnitConversionRow[];
+}): {
+  matched: boolean;
+  partial: boolean;
+  unitMismatch: DefineUnitAction | null;
+} {
+  const { ingredientName, needed, needUnit, lots, conversions } = opts;
+  if (lots.length === 0) {
+    return { matched: false, partial: false, unitMismatch: null };
+  }
+
+  let haveInNeedUnit = 0;
+  let mismatchFrom: string | null = null;
+  let displayName = ingredientName;
+
+  for (const lot of lots) {
+    if (lot.available <= 0) continue;
+    displayName = lot.displayName || displayName;
+    if (unitsMatch(lot.unit, needUnit)) {
+      haveInNeedUnit += lot.available;
+      continue;
+    }
+    const conv = findConversion(
+      conversions,
+      ingredientName,
+      lot.unit,
+      needUnit,
+    );
+    if (conv) {
+      const converted = convertQuantity(
+        lot.available,
+        lot.unit,
+        needUnit,
+        conv,
+      );
+      if (converted != null) haveInNeedUnit += converted;
+    } else if (!mismatchFrom) {
+      mismatchFrom = lot.unit;
+    }
+  }
+
+  if (haveInNeedUnit >= needed && needed >= 0) {
+    return { matched: true, partial: false, unitMismatch: null };
+  }
+  if (mismatchFrom) {
+    return {
+      matched: false,
+      partial: haveInNeedUnit > 0,
+      unitMismatch: {
+        action_required: 'define_unit',
+        item: displayName,
+        from_unit: mismatchFrom,
+        to_unit: needUnit.trim() || 'pcs',
+      },
+    };
+  }
+  if (haveInNeedUnit > 0 && haveInNeedUnit < needed) {
+    return { matched: true, partial: true, unitMismatch: null };
+  }
+  return { matched: false, partial: false, unitMismatch: null };
+}
 
 const PLAN_MEALS_MAX = 28;
 
@@ -78,10 +190,6 @@ function asNumber(v: unknown, fallback = 0): number {
     if (Number.isFinite(n)) return n;
   }
   return fallback;
-}
-
-function normalizeName(name: string): string {
-  return name.trim().toLowerCase();
 }
 
 function itemListFromArgs(args: Record<string, unknown>): Array<{
@@ -304,31 +412,29 @@ async function suggestMealsFromPantry(
   db: D1Database,
   userId: string,
 ): Promise<ToolExecResult> {
+  const prefs = await getOrCreatePreferences(db, userId);
+  const assumeBasicSeasonings = readAssumeBasicSeasonings(prefs);
+
   const today = new Date().toISOString().slice(0, 10);
   const range = defaultSoftReserveRange(today);
-  const soft = await computePantrySoftReserve(
-    db,
-    userId,
-    range.from,
-    range.to,
-  );
-  /** Prefer available stock (after soft reserve) for cookability. */
-  const availableByName = new Map<string, number>();
-  for (const s of soft) {
-    const key = normalizeName(s.name);
-    if (!key) continue;
-    availableByName.set(
-      key,
-      (availableByName.get(key) ?? 0) + s.available,
-    );
-  }
+  const [soft, conversions] = await Promise.all([
+    computePantrySoftReserve(db, userId, range.from, range.to),
+    listConversionsForUser(db, userId),
+  ]);
+  /** Prefer available stock (after soft reserve), keyed by name with units. */
+  const stockByName = buildStockByName(soft);
+  const defineUnitActions = new Map<string, DefineUnitAction>();
 
   const recipes = await listRecipes(db, userId);
   const scored: Array<{
     recipe: ReturnType<typeof toRecipeDto>;
     score: number;
+    matchScore: number;
     matched: string[];
     missing: string[];
+    missingMains: string[];
+    conditionalSeasonings: string[];
+    cookStatus: ReturnType<typeof classifyCookStatus>;
     cookable: boolean;
   }> = [];
 
@@ -341,13 +447,29 @@ async function suggestMealsFromPantry(
       if (!n) continue;
       const need = Number(ing.quantity);
       const needed = Number.isFinite(need) ? need : 0;
-      const have = availableByName.get(n) ?? 0;
-      if (have >= needed && needed >= 0) {
+      const result = matchIngredientAgainstStock({
+        ingredientName: ing.name,
+        needed,
+        needUnit: ing.unit ?? 'pcs',
+        lots: stockByName.get(n) ?? [],
+        conversions,
+      });
+      if (result.unitMismatch && defineUnitActions.size < DEFINE_UNIT_ACTION_CAP) {
+        defineUnitActions.set(
+          actionKey(result.unitMismatch),
+          result.unitMismatch,
+        );
+      }
+      if (result.matched && !result.partial && !result.unitMismatch) {
         matched.push(ing.name);
-      } else if (have > 0 && have < needed) {
+      } else if (result.matched && result.partial) {
         matched.push(ing.name);
         missing.push(ing.name);
       } else {
+        // Pantry name overlap (incl. unit mismatch) still counts as matched for ranking
+        if ((stockByName.get(n) ?? []).some((l) => l.available > 0)) {
+          matched.push(ing.name);
+        }
         missing.push(ing.name);
       }
     }
@@ -355,15 +477,35 @@ async function suggestMealsFromPantry(
       // no pantry overlap at all — skip unless recipe has no ingredients
       if (ingredients.length > 0) continue;
     }
-    const cookable = missing.length === 0 && ingredients.length > 0;
-    // Prefer cookable; score = matched count, boost if fully cookable
-    const score = matched.length + (cookable ? 100 : 0);
+    const cookStatus =
+      ingredients.length === 0
+        ? 'uncookable'
+        : classifyCookStatus(missing, assumeBasicSeasonings);
+    const cookable = cookStatus === 'cookable';
+    const conditional =
+      cookStatus === 'conditionally_cookable'
+        ? conditionalSeasonings(missing)
+        : [];
+    const mains = missingMains(missing);
+    // Prefer cookable; then conditional; score = matched count + boosts
+    const score =
+      matched.length +
+      (cookable ? 100 : 0) +
+      (cookStatus === 'conditionally_cookable' ? 50 : 0);
+    const matchScore =
+      ingredients.length === 0
+        ? 0
+        : Math.round((matched.length / ingredients.length) * 100);
     if (matched.length === 0 && !cookable) continue;
     scored.push({
       recipe: toRecipeDto(row, ingredients),
       score,
+      matchScore,
       matched,
       missing,
+      missingMains: mains,
+      conditionalSeasonings: conditional,
+      cookStatus,
       cookable,
     });
   }
@@ -373,12 +515,22 @@ async function suggestMealsFromPantry(
     id: s.recipe.id,
     meal_name: s.recipe.meal_name,
     score: s.score,
+    matchScore: s.matchScore,
     matchedIngredients: s.matched,
     missingIngredients: s.missing,
+    missingMains: s.missingMains,
+    ...(s.conditionalSeasonings.length > 0
+      ? { conditionalSeasonings: s.conditionalSeasonings }
+      : {}),
+    cookStatus: s.cookStatus,
     cookable: s.cookable,
     image: s.recipe.image,
   }));
 
+  const actions = [...defineUnitActions.values()].slice(
+    0,
+    DEFINE_UNIT_ACTION_CAP,
+  );
   const cardType = TOOL_CARD_TYPES.suggestMealsFromPantry!;
   return {
     content: JSON.stringify({
@@ -386,9 +538,14 @@ async function suggestMealsFromPantry(
       pantryItemCount: soft.length,
       softReserveWindow: range,
       cookableCount: suggestions.filter((s) => s.cookable).length,
+      conditionallyCookableCount: suggestions.filter(
+        (s) => s.cookStatus === 'conditionally_cookable',
+      ).length,
+      assumeBasicSeasonings,
+      ...(actions.length > 0 ? { actions } : {}),
     }),
     cardType,
-    cardData: { suggestions },
+    cardData: mealSuggestionsCardData(suggestions, actions),
   };
 }
 
@@ -691,6 +848,9 @@ export async function executeTool(
           ? { measurementUnit: args.measurementUnit }
           : {}),
         ...(typeof args.notes === 'string' ? { notes: args.notes } : {}),
+        ...(typeof args.assumeBasicSeasonings === 'boolean'
+          ? { assumeBasicSeasonings: args.assumeBasicSeasonings }
+          : {}),
       });
       const preferences = toPreferencesDto(row);
       const cardType = TOOL_CARD_TYPES.updatePreferences!;

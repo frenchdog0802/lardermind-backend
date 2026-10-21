@@ -1,11 +1,14 @@
 # Feature: Web Setup Guide (Stripe-style)
 
-**Status:** Implemented  
-**Scope:** Web desktop (`frontend/`) — floating right Setup guide panel  
+**Status:** Superseded / retired  
+**Superseded by:** [first-win-bootstrap](./first-win-bootstrap.md) (Phase A — Setup Guide unmounted; Chat empty leads first win)  
+**Scope (historical):** Web desktop (`frontend/`) — floating right Setup guide panel  
 **Out of scope:** Mobile, backend schema changes, subscription step, empty-Chat duplicate card
 
 **Design:** [web-setup-guide-design.md](../design/web-setup-guide-design.md)  
 **Tasks:** [tasks/web-setup-guide/](../../tasks/web-setup-guide/)
+
+> **Product note:** Sequential locked Setup Guide (pantry → recipes → chat) conflicts with [product-principles.md](../product-principles.md) First interaction rule. The panel is retired from the product; do not re-enable without an explicit exception in product principles.
 
 ---
 

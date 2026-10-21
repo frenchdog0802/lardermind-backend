@@ -1,8 +1,11 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { ok, fail } from '../lib/api-response';
 import type { Env } from '../env';
 import type { AuthVariables } from '../middleware/auth';
-import { requireAuth } from '../middleware/auth';
+import { clientIp, requireAuth } from '../middleware/auth';
+import { assertGuestChatIpAllowed } from '../db/guests';
+
+type ChatContext = Context<{ Bindings: Env; Variables: AuthVariables }>;
 import {
   clearHistory,
   createSession,
@@ -123,8 +126,26 @@ chatRoutes.get('/api/chat/actions', async (c) => {
   );
 });
 
+async function enforceGuestChatIp(c: ChatContext): Promise<Response | null> {
+  if (!c.get('isGuest')) return null;
+  try {
+    await assertGuestChatIpAllowed(c.env.DB, clientIp(c));
+    return null;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Guest chat rate limit exceeded';
+    return c.json(
+      { success: false, message, code: 'guest_chat_rate_limited' },
+      429,
+    );
+  }
+}
+
 chatRoutes.post('/api/chat/stream', async (c) => {
   const userId = c.get('userId');
+  const rateLimited = await enforceGuestChatIp(c);
+  if (rateLimited) return rateLimited;
+
   const body = await c.req.json<ChatSendBody>();
   if (!body.message?.trim()) {
     return c.json(fail('message is required'), 400);
@@ -144,11 +165,15 @@ chatRoutes.post('/api/chat/stream', async (c) => {
     sessionId,
     message: body.message.trim(),
     clientLocalDate: optionalClientLocalDate(body.clientLocalDate),
+    isGuest: c.get('isGuest'),
   });
 });
 
 chatRoutes.post('/api/chat/send', async (c) => {
   const userId = c.get('userId');
+  const rateLimited = await enforceGuestChatIp(c);
+  if (rateLimited) return rateLimited;
+
   const body = await c.req.json<ChatSendBody>();
   if (!body.message?.trim()) {
     return c.json(fail('message is required'), 400);
@@ -168,6 +193,7 @@ chatRoutes.post('/api/chat/send', async (c) => {
     sessionId,
     message: body.message.trim(),
     clientLocalDate: optionalClientLocalDate(body.clientLocalDate),
+    isGuest: c.get('isGuest'),
   });
 
   if (turn.kind === 'busy') {

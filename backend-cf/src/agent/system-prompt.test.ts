@@ -68,4 +68,49 @@ describe('buildCookingAssistantSystemPrompt', () => {
     expect(prompt).toMatch(/warn.*slot|same serving_date/i);
     expect(prompt).toMatch(/shopping list lines were removed/i);
   });
+
+  it('documents conditionally_cookable and assumeBasicSeasonings', () => {
+    const prompt = buildCookingAssistantSystemPrompt({
+      todayLocalDate: '2026-10-11',
+    });
+    expect(prompt).toMatch(/assumeBasicSeasonings/);
+    expect(prompt).toMatch(/conditionally_cookable/);
+    expect(prompt).toMatch(/Never call these fully cookable|完全可煮/);
+    expect(prompt).toMatch(/missingMains|缺山藥/);
+  });
+
+  it('documents first-win paste list orchestration', () => {
+    const prompt = buildCookingAssistantSystemPrompt({
+      todayLocalDate: '2026-10-11',
+    });
+    expect(prompt).toMatch(/First-win paste list/i);
+    expect(prompt).toMatch(/addPantryItems/);
+    expect(prompt).toMatch(/createRecipe/);
+    expect(prompt).toMatch(/suggestMealsFromPantry/);
+    expect(prompt).toMatch(/paste a short fridge/i);
+  });
+
+  it('documents value-first empty reply policy vs stock-dependent paste', () => {
+    const prompt = buildCookingAssistantSystemPrompt({
+      todayLocalDate: '2026-10-11',
+    });
+    expect(prompt).toMatch(/Empty or sparse kitchen — reply policy/i);
+    expect(prompt).toMatch(/Knowledge \/ principle \/ generic plan/i);
+    expect(prompt).toMatch(/answer first/i);
+    expect(prompt).toMatch(/Do \*\*not\*\* open with|must \*\*not\*\* cause refuse-first/i);
+    expect(prompt).toMatch(/規劃第一天副食品/);
+    expect(prompt).toMatch(/Stock-dependent/i);
+    expect(prompt).toMatch(/Ambiguous/i);
+    expect(prompt).toMatch(/short generic starter/i);
+    expect(prompt).toMatch(/value before homework/i);
+    expect(prompt).toMatch(/Never invent stock without approval|Never invent pantry/i);
+  });
+
+  it('documents define_unit card and re-suggest after conversion', () => {
+    const prompt = buildCookingAssistantSystemPrompt({
+      todayLocalDate: '2026-10-11',
+    });
+    expect(prompt).toMatch(/define_unit/);
+    expect(prompt).toMatch(/suggestMealsFromPantry.*again|call \*\*suggestMealsFromPantry\*\* again/i);
+  });
 });

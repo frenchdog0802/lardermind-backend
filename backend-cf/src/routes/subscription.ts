@@ -3,7 +3,7 @@ import type Stripe from 'stripe';
 import { ok, fail } from '../lib/api-response';
 import type { Env } from '../env';
 import type { AuthVariables } from '../middleware/auth';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireNonGuest } from '../middleware/auth';
 import { findUserById } from '../db/users';
 import { FREE_TIER, PRO_TIER } from '../lib/entitlement';
 import {
@@ -70,7 +70,11 @@ subscriptionRoutes.get('/api/subscription/plans', (c) =>
   ),
 );
 
-subscriptionRoutes.get('/api/subscription/status', requireAuth, async (c) => {
+subscriptionRoutes.get(
+  '/api/subscription/status',
+  requireAuth,
+  requireNonGuest,
+  async (c) => {
   const userId = c.get('userId');
   const user = await findUserById(c.env.DB, userId);
   if (!user) {
@@ -119,7 +123,11 @@ subscriptionRoutes.get('/api/subscription/status', requireAuth, async (c) => {
   );
 });
 
-subscriptionRoutes.post('/api/subscription/checkout', requireAuth, async (c) => {
+subscriptionRoutes.post(
+  '/api/subscription/checkout',
+  requireAuth,
+  requireNonGuest,
+  async (c) => {
   if (!stripeConfigured(c.env)) {
     return c.json(fail('Stripe is not configured'), 503);
   }
@@ -187,7 +195,11 @@ subscriptionRoutes.post('/api/subscription/checkout', requireAuth, async (c) => 
   }
 });
 
-subscriptionRoutes.post('/api/subscription/portal', requireAuth, async (c) => {
+subscriptionRoutes.post(
+  '/api/subscription/portal',
+  requireAuth,
+  requireNonGuest,
+  async (c) => {
   if (!stripeConfigured(c.env)) {
     return c.json(fail('Stripe is not configured'), 503);
   }

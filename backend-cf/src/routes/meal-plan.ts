@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { fail, ok } from '../lib/api-response';
 import type { Env } from '../env';
 import type { AuthVariables } from '../middleware/auth';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireNonGuest } from '../middleware/auth';
 import {
   computeWeekAvailability,
   confirmMealPlan,
@@ -23,8 +23,8 @@ export const mealPlanRoutes = new Hono<{
   Variables: AuthVariables;
 }>();
 
-mealPlanRoutes.use('/api/meal-plan', requireAuth);
-mealPlanRoutes.use('/api/meal-plan/*', requireAuth);
+mealPlanRoutes.use('/api/meal-plan', requireAuth, requireNonGuest);
+mealPlanRoutes.use('/api/meal-plan/*', requireAuth, requireNonGuest);
 
 type LooseRecord = Record<string, unknown>;
 

@@ -3,12 +3,17 @@ main = "src/index.ts"
 compatibility_date = "2026-09-14"
 compatibility_flags = ["nodejs_compat"]
 
-# After `npm run db:create`, paste database_id below.
+# Default (top-level) = production. Deploy: `wrangler deploy`
+# Staging: `wrangler deploy --env staging` → Worker `lardermind-api-staging`
+
 [[d1_databases]]
 binding = "DB"
 database_name = "lardermind"
 database_id = "9f238601-49f0-47df-a83d-212ae497e65b"
 migrations_dir = "migrations"
+
+[triggers]
+crons = ["0 * * * *"]
 
 [ai]
 binding = "AI"
@@ -28,6 +33,37 @@ JWT_EXPIRES_IN_SECONDS = "2592000"
 FRONTEND_URL = "https://lardermind.com"
 GOOGLE_CLIENT_ID = "603047692060-llk1cjf1b0f5bpdb9it5cvogk2b8haio.apps.googleusercontent.com"
 
+# --- Staging (separate Worker + D1 + R2; secrets via `wrangler secret put --env staging`) ---
+[env.staging]
+name = "lardermind-api-staging"
+
+[env.staging.triggers]
+crons = ["0 * * * *"]
+
+[env.staging.ai]
+binding = "AI"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "lardermind-staging"
+database_id = "56d48981-ec9e-45b8-986e-041516c0dad4"
+migrations_dir = "migrations"
+
+[[env.staging.r2_buckets]]
+binding = "R2"
+bucket_name = "lardermind-media-staging"
+
+[env.staging.vars]
+CORS_ALLOWED_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173,https://lardermind-web.pages.dev"
+CF_ACCOUNT_ID = "07f4b1329f917e76a16c08d7cd00789d"
+AI_GATEWAY_ID = "default"
+LLM_MODEL = "deepseek-chat"
+OPENAI_VISION_MODEL = "gpt-4o"
+OPENAI_VISION_TIMEOUT_MS = "60000"
+JWT_EXPIRES_IN_SECONDS = "2592000"
+FRONTEND_URL = "https://lardermind-web.pages.dev"
+GOOGLE_CLIENT_ID = "603047692060-llk1cjf1b0f5bpdb9it5cvogk2b8haio.apps.googleusercontent.com"
+
 # Secrets (wrangler secret put / .dev.vars):
 #   JWT_SECRET — min 32 chars
 #   CF_AIG_TOKEN — Authenticated Gateway (cf-aig-authorization)
@@ -38,3 +74,11 @@ GOOGLE_CLIENT_ID = "603047692060-llk1cjf1b0f5bpdb9it5cvogk2b8haio.apps.googleuse
 # Vars (also via wrangler.toml [vars] or .dev.vars):
 #   STRIPE_PRICE_MONTHLY — price_…
 #   STRIPE_PRICE_YEARLY — price_…
+#
+# Staging secrets (one-time; do not reuse production JWT_SECRET):
+#   npx wrangler secret put JWT_SECRET --env staging
+#   npx wrangler secret put CF_AIG_TOKEN --env staging
+#   npx wrangler secret put DEEPSEEK_API_KEY --env staging
+#   npx wrangler secret put OPENAI_API_KEY --env staging
+#   npx wrangler secret put STRIPE_SECRET_KEY --env staging   # use sk_test_…
+#   npx wrangler secret put STRIPE_WEBHOOK_SECRET --env staging

@@ -15,7 +15,9 @@ import { folderRoutes } from './routes/folder';
 import { ingredientRoutes } from './routes/ingredient';
 import { recipeRoutes } from './routes/recipe';
 import { mealPlanRoutes } from './routes/meal-plan';
+import { unitConversionRoutes } from './routes/unit-conversions';
 import { fail } from './lib/api-response';
+import { purgeExpiredGuests } from './db/guests';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -35,6 +37,7 @@ app.route('/', folderRoutes);
 app.route('/', ingredientRoutes);
 app.route('/', recipeRoutes);
 app.route('/', mealPlanRoutes);
+app.route('/', unitConversionRoutes);
 
 app.notFound((c) => c.json(fail('Not found'), 404));
 
@@ -43,4 +46,13 @@ app.onError((err, c) => {
   return c.json(fail(err.message || 'Internal server error'), 500);
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    _ctx: ExecutionContext,
+  ): Promise<void> {
+    await purgeExpiredGuests(env.DB);
+  },
+};

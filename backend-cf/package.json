@@ -7,10 +7,12 @@
     "dev": "wrangler dev --local",
     "dev:remote": "wrangler dev",
     "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging",
     "types": "wrangler types",
     "test": "vitest run",
     "db:migrate:local": "wrangler d1 migrations apply lardermind --local",
     "db:migrate:remote": "wrangler d1 migrations apply lardermind --remote",
+    "db:migrate:staging": "wrangler d1 migrations apply lardermind-staging --remote --env staging",
     "db:create": "wrangler d1 create lardermind"
   },
   "dependencies": {

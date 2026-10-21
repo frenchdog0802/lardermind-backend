@@ -20,6 +20,7 @@ API is **Cloudflare Workers** only (`backend-cf/`). Nest / `backend-node` and th
 
 | If you want to… | Read this |
 |-----------------|-----------|
+| Product principles (value first) | [docs/product-principles.md](./docs/product-principles.md) |
 | Dev workflow (feature / bug) | [docs/workflow/README.md](./docs/workflow/README.md) · [AGENTS.md](./AGENTS.md) |
 | Cloudflare API | [backend-cf/README.md](./backend-cf/README.md) · [docs/features/backend-cf-api.md](./docs/features/backend-cf-api.md) |
 | Cloudflare Pages (web) | [docs/features/frontend-cf-pages.md](./docs/features/frontend-cf-pages.md) · CI in **lardermind-frontend** |

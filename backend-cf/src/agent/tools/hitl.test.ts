@@ -3,6 +3,7 @@ import { argsSummary, isMutatingTool, toPendingTools } from './hitl';
 import {
   aggregateCard,
   mealPlanUpdatedCardData,
+  mealSuggestionsCardData,
   recipeCreatedCardData,
 } from './cards';
 
@@ -149,6 +150,30 @@ describe('recipeCreatedCardData', () => {
       recipeName: '燙青菜',
       mealType: 'dinner',
       servingDate: '2026-10-06',
+    });
+  });
+});
+
+describe('mealSuggestionsCardData', () => {
+  it('maps suggestion DTOs to flat client card shape', () => {
+    expect(
+      mealSuggestionsCardData([
+        {
+          id: 'r1',
+          meal_name: '山藥排骨湯',
+          matchScore: 50,
+          missingIngredients: ['山藥'],
+        },
+      ]),
+    ).toEqual({
+      suggestions: [
+        {
+          recipeId: 'r1',
+          recipeName: '山藥排骨湯',
+          matchScore: 50,
+          missingIngredients: ['山藥'],
+        },
+      ],
     });
   });
 });

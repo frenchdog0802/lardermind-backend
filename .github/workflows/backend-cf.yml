@@ -2,10 +2,20 @@ name: Deploy backend-cf
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, develop, dev]
     paths:
       - 'backend-cf/**'
       - '.github/workflows/backend-cf.yml'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Deploy target
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
 
 env:
   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -42,7 +52,23 @@ jobs:
           cache: npm
           cache-dependency-path: backend-cf/package-lock.json
       - run: npm ci --legacy-peer-deps
-      - run: npx wrangler d1 migrations apply lardermind --remote
+      - name: Resolve target
+        id: target
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "env=${{ github.event.inputs.target }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref }}" = "refs/heads/dev" ] || [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+            echo "env=staging" >> "$GITHUB_OUTPUT"
+          else
+            echo "env=production" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Migrate staging
+        if: steps.target.outputs.env == 'staging'
+        run: npx wrangler d1 migrations apply lardermind-staging --remote --env staging
+      - name: Migrate production
+        if: steps.target.outputs.env == 'production'
+        run: npx wrangler d1 migrations apply lardermind --remote
 
   deploy:
     name: Deploy Worker
@@ -59,4 +85,20 @@ jobs:
           cache: npm
           cache-dependency-path: backend-cf/package-lock.json
       - run: npm ci --legacy-peer-deps
-      - run: npx wrangler deploy
+      - name: Resolve target
+        id: target
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "env=${{ github.event.inputs.target }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref }}" = "refs/heads/dev" ] || [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+            echo "env=staging" >> "$GITHUB_OUTPUT"
+          else
+            echo "env=production" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Deploy staging
+        if: steps.target.outputs.env == 'staging'
+        run: npx wrangler deploy --env staging
+      - name: Deploy production
+        if: steps.target.outputs.env == 'production'
+        run: npx wrangler deploy

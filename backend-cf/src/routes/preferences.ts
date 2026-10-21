@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { fail, ok } from '../lib/api-response';
 import type { Env } from '../env';
 import type { AuthVariables } from '../middleware/auth';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireNonGuest } from '../middleware/auth';
 import {
   getOrCreatePreferences,
   toPreferencesDto,
@@ -15,8 +15,8 @@ export const preferencesRoutes = new Hono<{
   Variables: AuthVariables;
 }>();
 
-preferencesRoutes.use('/api/user-preferences', requireAuth);
-preferencesRoutes.use('/api/user-preferences/*', requireAuth);
+preferencesRoutes.use('/api/user-preferences', requireAuth, requireNonGuest);
+preferencesRoutes.use('/api/user-preferences/*', requireAuth, requireNonGuest);
 
 type LooseRecord = Record<string, unknown>;
 
@@ -54,6 +54,9 @@ function parseInput(body: unknown): UserPreferencesInput {
     input.measurementUnit = root.measurementUnit;
   }
   if (typeof root.notes === 'string') input.notes = root.notes;
+  if (typeof root.assumeBasicSeasonings === 'boolean') {
+    input.assumeBasicSeasonings = root.assumeBasicSeasonings;
+  }
   return input;
 }
 

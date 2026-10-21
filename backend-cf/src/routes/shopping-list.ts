@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { fail, ok } from '../lib/api-response';
 import type { Env } from '../env';
 import type { AuthVariables } from '../middleware/auth';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireNonGuest } from '../middleware/auth';
 import {
   assertBatchSize,
   mergeAddShoppingListItem,
@@ -23,8 +23,8 @@ export const shoppingListRoutes = new Hono<{
   Variables: AuthVariables;
 }>();
 
-shoppingListRoutes.use('/api/shopping-list', requireAuth);
-shoppingListRoutes.use('/api/shopping-list/*', requireAuth);
+shoppingListRoutes.use('/api/shopping-list', requireAuth, requireNonGuest);
+shoppingListRoutes.use('/api/shopping-list/*', requireAuth, requireNonGuest);
 
 type LooseRecord = Record<string, unknown>;
 

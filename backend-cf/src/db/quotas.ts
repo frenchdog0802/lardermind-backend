@@ -1,9 +1,10 @@
 import { nowUnixSeconds } from '../lib/time';
-import { FREE_TIER, PRO_TIER } from '../lib/entitlement';
+import { FREE_TIER, GUEST_TIER, PRO_TIER } from '../lib/entitlement';
 
 export const FREE_IMAGE_UPLOAD_LIMIT = FREE_TIER.imageUploadsPerMonth;
 export const FREE_AI_MESSAGES_PER_DAY = FREE_TIER.aiMessagesPerDay;
 export const PRO_AI_MESSAGES_PER_DAY = PRO_TIER.aiMessagesPerDay;
+export const GUEST_AI_MESSAGES_PER_DAY = GUEST_TIER.aiMessagesPerDay;
 
 export class QuotaExceededError extends Error {
   constructor(message = 'Image upload quota exceeded for this month') {
@@ -106,11 +107,18 @@ export async function checkAndIncrementImageUpload(
 export async function checkAndIncrementAiMessage(
   db: D1Database,
   userId: string,
-  options: { isPro?: boolean; isAdmin?: boolean } = {},
+  options: { isPro?: boolean; isAdmin?: boolean; isGuest?: boolean } = {},
 ): Promise<void> {
   const isAdmin = Boolean(options.isAdmin);
   const isPro = Boolean(options.isPro);
-  const limit = isAdmin ? -1 : isPro ? PRO_AI_MESSAGES_PER_DAY : FREE_AI_MESSAGES_PER_DAY;
+  const isGuest = Boolean(options.isGuest);
+  const limit = isAdmin
+    ? -1
+    : isGuest
+      ? GUEST_AI_MESSAGES_PER_DAY
+      : isPro
+        ? PRO_AI_MESSAGES_PER_DAY
+        : FREE_AI_MESSAGES_PER_DAY;
   const now = nowUnixSeconds();
   const periodStart = startOfUtcDay(now);
 

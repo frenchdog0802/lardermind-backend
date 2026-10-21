@@ -42,6 +42,46 @@ export function mealPlanUpdatedCardData(plan: {
   };
 }
 
+export type DefineUnitAction = {
+  action_required: 'define_unit';
+  item: string;
+  from_unit: string;
+  to_unit: string;
+};
+
+/** Flat card payload expected by web/mobile `meal_suggestions` UI. */
+export function mealSuggestionsCardData(
+  suggestions: Array<{
+    id: string;
+    meal_name: string;
+    matchScore: number;
+    missingIngredients?: string[];
+    missingMains?: string[];
+    conditionalSeasonings?: string[];
+    cookStatus?: string;
+    cookable?: boolean;
+  }>,
+  actions?: DefineUnitAction[],
+): Record<string, unknown> {
+  return {
+    suggestions: suggestions.map((s) => ({
+      recipeId: s.id,
+      recipeName: s.meal_name,
+      matchScore: s.matchScore,
+      ...(s.missingIngredients
+        ? { missingIngredients: s.missingIngredients }
+        : {}),
+      ...(s.missingMains ? { missingMains: s.missingMains } : {}),
+      ...(s.conditionalSeasonings?.length
+        ? { conditionalSeasonings: s.conditionalSeasonings }
+        : {}),
+      ...(s.cookStatus ? { cookStatus: s.cookStatus } : {}),
+      ...(typeof s.cookable === 'boolean' ? { cookable: s.cookable } : {}),
+    })),
+    ...(actions && actions.length > 0 ? { actions } : {}),
+  };
+}
+
 export type ToolCardEvent = {
   toolName: string;
   cardType: string;

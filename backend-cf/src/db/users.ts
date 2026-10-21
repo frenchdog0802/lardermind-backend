@@ -16,6 +16,8 @@ export type UserRow = {
   picture: string | null;
   created_at: number | null;
   updated_at: number | null;
+  is_guest?: number | null;
+  expires_at?: number | null;
 };
 
 export type AuthUserDto = {
@@ -205,6 +207,9 @@ export async function signInUser(
 ): Promise<UserRow> {
   const user = await findUserByEmail(env.DB, input.email);
   if (!user) throw new Error('User not found');
+  if (Number(user.is_guest) === 1 || user.role === 'guest') {
+    throw new Error('Guest accounts cannot sign in with password');
+  }
   if (
     !user.salt ||
     !user.hashed_password ||

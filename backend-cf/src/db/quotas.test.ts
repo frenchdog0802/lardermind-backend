@@ -4,6 +4,7 @@ import {
   checkAndIncrementImageUpload,
   FREE_AI_MESSAGES_PER_DAY,
   FREE_IMAGE_UPLOAD_LIMIT,
+  GUEST_AI_MESSAGES_PER_DAY,
   PRO_AI_MESSAGES_PER_DAY,
   QuotaExceededError,
   startOfUtcDay,
@@ -219,5 +220,21 @@ describe('checkAndIncrementAiMessage', () => {
 
     await checkAndIncrementAiMessage(db, 'u1', { isAdmin: true });
     expect(state.row?.ai_message_sent).toBe(501);
+  });
+
+  it('allows 5 guest messages then forbids the 6th', async () => {
+    const { db, state } = createFakeDb({
+      ai_message_sent: 0,
+      ai_period_start: startOfUtcDay(Math.floor(Date.now() / 1000)),
+    });
+
+    for (let i = 0; i < GUEST_AI_MESSAGES_PER_DAY; i++) {
+      await checkAndIncrementAiMessage(db, 'g1', { isGuest: true });
+    }
+    expect(state.row?.ai_message_sent).toBe(GUEST_AI_MESSAGES_PER_DAY);
+
+    await expect(
+      checkAndIncrementAiMessage(db, 'g1', { isGuest: true }),
+    ).rejects.toBeInstanceOf(QuotaExceededError);
   });
 });

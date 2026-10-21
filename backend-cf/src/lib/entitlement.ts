@@ -19,12 +19,25 @@ export type Entitlement = {
   hasHadSubscription: boolean;
 };
 
+export const GUEST_TIER = {
+  aiMessagesPerDay: 5,
+  recipeImportsPerMonth: 0,
+  maxRecipes: 10,
+  imageUploadsPerMonth: 0,
+};
+
 export const FREE_TIER = {
   aiMessagesPerDay: 20,
   recipeImportsPerMonth: 3,
   maxRecipes: 50,
   imageUploadsPerMonth: 10,
 };
+
+/** Guest JWT / kitchen TTL (seconds). Default 4 hours. */
+export const GUEST_TTL_SECONDS = 4 * 60 * 60;
+
+export const GUEST_MINT_PER_IP_PER_DAY = 5;
+export const GUEST_CHAT_PER_IP_PER_DAY = 20;
 
 export const PRO_TIER = {
   aiMessagesPerDay: 200,

@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { ok, fail } from '../lib/api-response';
 import type { Env } from '../env';
 import type { AuthVariables } from '../middleware/auth';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireNonGuest } from '../middleware/auth';
 import { findUserById } from '../db/users';
 import { resolveEntitlement } from '../db/subscriptions';
 import {
@@ -29,7 +29,7 @@ export const pantryVisionRoutes = new Hono<{
   Variables: AuthVariables;
 }>();
 
-pantryVisionRoutes.use('/api/pantry-vision/*', requireAuth);
+pantryVisionRoutes.use('/api/pantry-vision/*', requireAuth, requireNonGuest);
 
 pantryVisionRoutes.post('/api/pantry-vision/recognize', async (c) => {
   const userId = c.get('userId');
