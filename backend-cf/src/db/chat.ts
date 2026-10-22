@@ -12,6 +12,8 @@ export type ChatSessionRow = {
   updated_at: number | null;
   locked_at?: number | null;
   pending_interrupt_json?: string | null;
+  pending_claim_token?: string | null;
+  hitl_checkpoint_json?: string | null;
 };
 
 /** Stale lock older than this is treated as free (seconds). */
@@ -31,10 +33,64 @@ export type PendingToolCall = {
 
 export type PendingInterrupt = {
   createdAt: number;
+  /** Stable id for this approval. Missing on rows created before the claim fix. */
+  interruptId?: string;
+  /** Unix seconds. Missing rows expire `createdAt + HITL_PENDING_TTL_SECONDS`. */
+  expiresAt?: number;
   pendingTools: PendingToolSummary[];
   toolCalls: PendingToolCall[];
   messages: Array<Record<string, unknown>>;
 };
+
+/** Pending approvals older than this are treated as rejected. */
+export const HITL_PENDING_TTL_SECONDS = 20 * 60;
+
+/** A claim older than this can be closed without re-running tools. */
+export const HITL_CLAIM_STALE_SECONDS = 90;
+
+export type HitlToolResult = {
+  id: string;
+  name: string;
+  content: string;
+  cardType?: string;
+  cardData?: Record<string, unknown>;
+};
+
+export type HitlCheckpoint = {
+  interruptId: string;
+  phase: 'results_saved' | 'complete';
+  decision: 'approve' | 'reject' | 'expire';
+  toolResults: HitlToolResult[];
+  httpStatus: number;
+  errorCode?: string;
+  response?: {
+    type: string;
+    message: string;
+    data: Record<string, unknown>;
+  };
+};
+
+export function interruptIdOf(pending: PendingInterrupt): string {
+  if (typeof pending.interruptId === 'string' && pending.interruptId.trim()) {
+    return pending.interruptId.trim();
+  }
+  const tool = pending.toolCalls[0]?.id ?? 'none';
+  return `legacy:${pending.createdAt}:${tool}`;
+}
+
+export function expiresAtOf(pending: PendingInterrupt): number {
+  if (typeof pending.expiresAt === 'number' && Number.isFinite(pending.expiresAt)) {
+    return pending.expiresAt;
+  }
+  return pending.createdAt + HITL_PENDING_TTL_SECONDS;
+}
+
+export function isPendingExpired(
+  pending: PendingInterrupt,
+  now = nowUnixSeconds(),
+): boolean {
+  return now >= expiresAtOf(pending);
+}
 
 export type AiMessageRow = {
   id: string;
@@ -340,12 +396,150 @@ export async function getPendingInterrupt(
   }
 }
 
-/** History-safe pending payload (tool summaries only; no toolCalls / LLM messages). */
+/** History-safe pending payload (tool summaries + ids; no toolCalls / LLM messages). */
 export function pendingInterruptForHistory(
   pending: PendingInterrupt | null,
-): { pendingTools: PendingToolSummary[] } | null {
+): {
+  interruptId: string;
+  expiresAt: number;
+  pendingTools: PendingToolSummary[];
+} | null {
   if (!pending) return null;
-  return { pendingTools: pending.pendingTools };
+  return {
+    interruptId: interruptIdOf(pending),
+    expiresAt: expiresAtOf(pending),
+    pendingTools: pending.pendingTools,
+  };
+}
+
+export function parseHitlCheckpoint(raw: string | null | undefined): HitlCheckpoint | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as HitlCheckpoint;
+    if (!parsed || (parsed.phase !== 'results_saved' && parsed.phase !== 'complete')) {
+      return null;
+    }
+    if (typeof parsed.interruptId !== 'string') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function claimPendingInterrupt(
+  db: D1Database,
+  userId: string,
+  sessionId: string,
+  token: string,
+  now = nowUnixSeconds(),
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE chat_sessions
+       SET pending_claim_token = ?, locked_at = ?
+       WHERE id = ? AND user_id = ?
+         AND pending_interrupt_json IS NOT NULL
+         AND pending_claim_token IS NULL`,
+    )
+    .bind(token, now, sessionId, userId)
+    .run();
+  return (result.meta?.changes ?? 0) > 0;
+}
+
+export async function reclaimStaleHitlClaim(
+  db: D1Database,
+  userId: string,
+  sessionId: string,
+  token: string,
+  now = nowUnixSeconds(),
+  staleSeconds = HITL_CLAIM_STALE_SECONDS,
+): Promise<boolean> {
+  const staleBefore = now - staleSeconds;
+  const result = await db
+    .prepare(
+      `UPDATE chat_sessions
+       SET pending_claim_token = ?, locked_at = ?
+       WHERE id = ? AND user_id = ?
+         AND pending_claim_token IS NOT NULL
+         AND locked_at IS NOT NULL
+         AND locked_at < ?`,
+    )
+    .bind(token, now, sessionId, userId, staleBefore)
+    .run();
+  return (result.meta?.changes ?? 0) > 0;
+}
+
+export async function saveHitlResultsAndClearPending(
+  db: D1Database,
+  userId: string,
+  sessionId: string,
+  claimToken: string,
+  checkpoint: HitlCheckpoint,
+  now = nowUnixSeconds(),
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE chat_sessions
+       SET pending_interrupt_json = NULL,
+           hitl_checkpoint_json = ?,
+           locked_at = ?,
+           updated_at = ?
+       WHERE id = ? AND user_id = ? AND pending_claim_token = ?`,
+    )
+    .bind(JSON.stringify(checkpoint), now, now, sessionId, userId, claimToken)
+    .run();
+}
+
+export async function finishHitlCheckpoint(
+  db: D1Database,
+  userId: string,
+  sessionId: string,
+  claimToken: string,
+  checkpoint: HitlCheckpoint,
+): Promise<void> {
+  const now = nowUnixSeconds();
+  await db
+    .prepare(
+      `UPDATE chat_sessions
+       SET hitl_checkpoint_json = ?,
+           pending_claim_token = NULL,
+           locked_at = NULL,
+           updated_at = ?
+       WHERE id = ? AND user_id = ? AND pending_claim_token = ?`,
+    )
+    .bind(JSON.stringify(checkpoint), now, sessionId, userId, claimToken)
+    .run();
+}
+
+/** Assistant row for a finished resume. Deterministic id so a replay does not duplicate it. */
+export async function insertHitlOutcomeMessage(
+  db: D1Database,
+  input: {
+    interruptId: string;
+    userId: string;
+    sessionId: string;
+    content: string;
+    responseType?: string;
+    cardData?: Record<string, unknown>;
+  },
+): Promise<void> {
+  const now = nowUnixSeconds();
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO ai_messages
+        (id, user_id, session_id, role, content, response_type, card_data, created_at)
+       VALUES (?, ?, ?, 'assistant', ?, ?, ?, ?)`,
+    )
+    .bind(
+      `hitl-${input.interruptId}`.slice(0, 200),
+      input.userId,
+      input.sessionId,
+      input.content,
+      input.responseType ?? null,
+      input.cardData ? JSON.stringify(input.cardData) : null,
+      now,
+    )
+    .run();
 }
 
 export async function clearPendingInterrupt(

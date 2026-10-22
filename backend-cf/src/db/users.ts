@@ -1,6 +1,6 @@
 import type { Env } from '../env';
 import { nowUnixSeconds } from '../lib/time';
-import { authenticate, encryptPassword, makeSalt } from '../lib/password';
+import { hashPassword, verifyPassword } from '../lib/password';
 import type { GoogleIdTokenProfile } from '../lib/google-id-token';
 
 export type UserRow = {
@@ -126,8 +126,7 @@ export async function upsertGoogleUser(
 
   const { first_name, last_name, name } = namesFromGoogleProfile(profile);
   const id = crypto.randomUUID();
-  const salt = makeSalt();
-  const hashedPassword = await encryptPassword(await randomPasswordHex(), salt);
+  const hashedPassword = await hashPassword(await randomPasswordHex());
   const now = nowUnixSeconds();
 
   await env.DB.batch([
@@ -143,7 +142,7 @@ export async function upsertGoogleUser(
       name,
       profile.email,
       hashedPassword,
-      salt,
+      null,
       profile.sub,
       profile.picture ?? null,
       now,
@@ -170,8 +169,7 @@ export async function createUser(
   }
 
   const id = crypto.randomUUID();
-  const salt = makeSalt();
-  const hashedPassword = await encryptPassword(input.password, salt);
+  const hashedPassword = await hashPassword(input.password);
   const now = nowUnixSeconds();
   const name = `${input.first_name} ${input.last_name}`.trim();
 
@@ -186,7 +184,7 @@ export async function createUser(
       name,
       input.email,
       hashedPassword,
-      salt,
+      null,
       now,
       now,
     ),
@@ -206,16 +204,50 @@ export async function signInUser(
   input: { email: string; password: string },
 ): Promise<UserRow> {
   const user = await findUserByEmail(env.DB, input.email);
-  if (!user) throw new Error('User not found');
+  if (!user) {
+    await verifyPassword(input.password, await dummyPasswordHash(), null);
+    throw new Error('User not found');
+  }
   if (Number(user.is_guest) === 1 || user.role === 'guest') {
     throw new Error('Guest accounts cannot sign in with password');
   }
-  if (
-    !user.salt ||
-    !user.hashed_password ||
-    !(await authenticate(input.password, user.salt, user.hashed_password))
-  ) {
+  const check = user.hashed_password
+    ? await verifyPassword(input.password, user.hashed_password, user.salt)
+    : { ok: false, needsRehash: false };
+  if (!check.ok) {
+    // Spend a KDF on unknown emails and password-less rows so the fast path is not "no user".
+    if (!user.hashed_password) {
+      await verifyPassword(input.password, await dummyPasswordHash(), null);
+    }
     throw new Error("Email and password don't match.");
   }
+  if (check.needsRehash) {
+    try {
+      const next = await hashPassword(input.password);
+      const now = nowUnixSeconds();
+      await env.DB.prepare(
+        `UPDATE users SET hashed_password = ?, updated_at = ? WHERE id = ?`,
+      )
+        .bind(next, now, user.id)
+        .run();
+      user.hashed_password = next;
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          msg: 'password_rehash_failed',
+          userId: user.id,
+          error: error instanceof Error ? error.message : 'rehash failed',
+        }),
+      );
+    }
+  }
   return user;
+}
+
+let dummyHashCache: Promise<string> | null = null;
+
+function dummyPasswordHash(): Promise<string> {
+  dummyHashCache ??= hashPassword('lardermind-dummy-password');
+  return dummyHashCache;
 }

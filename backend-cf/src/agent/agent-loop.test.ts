@@ -238,7 +238,7 @@ describe('agent loop', () => {
 
   it('resume approve executes mutating tool; reject skips write', async () => {
     const pending = {
-      createdAt: 1,
+      createdAt: Math.floor(Date.now() / 1000),
       pendingTools: [
         { name: 'addPantryItems', argsSummary: 'butter', id: 'c1' },
       ],

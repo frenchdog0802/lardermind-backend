@@ -16,7 +16,8 @@ Parallel backend for the CF stack. **Does not replace** Nest until you switch cl
 | Media | R2 (`lardermind-media`) |
 | AI chat | DeepSeek via Cloudflare AI Gateway (SSE) |
 | Vision | OpenAI gpt-4o via AI Gateway (`/api/pantry-vision/*`) |
-| Auth | JWT HS256 (Nest-compatible payload) |
+| Auth | JWT HS256 (long-lived Bearer; refresh tokens are a follow-up) |
+| Passwords | PBKDF2-SHA256 (`pbkdf2-sha256$iterations$salt$hash`); legacy HMAC-SHA1 rehashed on login |
 
 ## Local dev
 
@@ -80,8 +81,10 @@ Confirm `CF_ACCOUNT_ID` / `AI_GATEWAY_ID` in `wrangler.toml` match the Cloudflar
 
 Workflow: [`.github/workflows/backend-cf.yml`](../.github/workflows/backend-cf.yml)
 
-On push to `main`/`master` when `backend-cf/**` changes, three jobs run in order:
-**Install dependencies** → **Apply D1 migrations** → **Deploy Worker**.
+On push to `main`/`master`/`develop`/`dev` when `backend-cf/**` changes, three jobs run in order:
+**Typecheck and test** → **Apply D1 migrations** → **Deploy Worker**.
+
+Pull requests run **Typecheck and test** only (`npm run typecheck` is `tsc --noEmit`, then `npm test`). There is no ESLint script in this package, so CI does not run a separate lint step. Migrations and deploy do not start unless typecheck and tests pass.
 
 Set these **GitHub repo secrets** (Settings → Secrets and variables → Actions):
 
@@ -184,6 +187,63 @@ Feature: [docs/features/frontend-cf-pages.md](../docs/features/frontend-cf-pages
 - Success envelope: `{ success, message, data: { imageUrl, publicId, image_url, public_id } }`
 - Multipart field: `file` or `image`
 - `imageUrl` is `{origin}/api/media/{userId}/{uuid}.ext` (same API host)
+
+## API contract additions (web / mobile follow-ups)
+
+These are additive. Clients that ignore them keep working.
+
+### `POST /api/chat/resume`
+
+```json
+{ "sessionId": "…", "decision": "approve", "note": "optional", "interruptId": "optional" }
+```
+
+- `interruptId` is optional. Omit it to approve or reject the current pending action.
+- New interrupts include `data.interruptId` and `data.expiresAt` (unix seconds). History `pendingInterrupt` includes the same fields plus `pendingTools`.
+- If `interruptId` is sent and does not match the pending action (or the last finished resume when nothing is pending): **409**
+
+```json
+{ "success": false, "message": "interruptId does not match the pending action", "code": "interrupt_mismatch", "requestId": "…" }
+```
+
+- A repeat resume of an action that already finished returns the original JSON body and does not run tools again.
+- A second overlapping resume while the first is still working: **409** `resume_in_progress`.
+- Pending actions older than 20 minutes are treated as rejected: **200** with `data.expired: true` and no tool writes.
+- Tool arguments that fail the tool schema: **400** `tool_args_invalid` (nothing written).
+- A targeted row that disappeared: **409** `target_missing` (nothing written).
+- No pending action and nothing to replay: **404** `no_pending_action`.
+
+### Shopping list
+
+Responses include `version` (integer, starts at 1) on the item and under `details.version`.
+
+Optional `Idempotency-Key` header on `POST /api/shopping-list`, `PUT /api/shopping-list/:id`, and `DELETE /api/shopping-list/:id` (1–128 characters, `[A-Za-z0-9._:-]`). The same user and key replays the original status and body for 24 hours and sets `Idempotency-Replayed: true`. A key reused on a different method or path is **409** `idempotency_key_reused`. A duplicate that arrives before the first request stores its body is **409** `idempotency_in_progress`.
+
+Optional expected version:
+
+- PUT: JSON `version` (or `details.version`), or header `X-Expected-Version`
+- DELETE: query `version`, or header `X-Expected-Version`
+- If both are sent and differ: **400**
+- If omitted: last write wins (the stored version still increments on update)
+
+Mismatch while the row exists:
+
+```json
+{
+  "success": false,
+  "message": "Version conflict",
+  "code": "version_conflict",
+  "data": { "current": { "id": "…", "version": 3, "name": "Milk" } }
+}
+```
+
+Missing row stays **404** `not_found`.
+
+### Errors and request ids
+
+Failed JSON bodies include `code` (see `src/lib/error-codes.ts`) and `requestId`. The response header `X-Request-Id` echoes a safe client id or a new UUID. Auth signup, signin, and Google login return **429** `rate_limited` with `Retry-After` when the 15-minute window is exhausted.
+
+OpenAPI for these bodies: `GET /api/openapi.json`.
 
 ### Chat tools + HITL
 

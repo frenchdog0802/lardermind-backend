@@ -30,7 +30,11 @@ export async function corsMiddleware(c: Context<{ Bindings: Env }>, next: Next) 
   c.res.headers.set('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   c.res.headers.set(
     'Access-Control-Allow-Headers',
-    'Authorization,Content-Type,Accept',
+    'Authorization,Content-Type,Accept,Idempotency-Key,X-Expected-Version,X-Request-Id',
+  );
+  c.res.headers.set(
+    'Access-Control-Expose-Headers',
+    'X-Request-Id,Idempotency-Replayed,Retry-After',
   );
 }
 
@@ -41,7 +45,9 @@ function corsHeaders(origin: string, allowed: string[]): HeadersInit {
     'Access-Control-Allow-Origin': allowOrigin,
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Authorization,Content-Type,Accept',
+    'Access-Control-Allow-Headers':
+      'Authorization,Content-Type,Accept,Idempotency-Key,X-Expected-Version,X-Request-Id',
+    'Access-Control-Expose-Headers': 'X-Request-Id,Idempotency-Replayed,Retry-After',
     Vary: 'Origin',
   };
 }

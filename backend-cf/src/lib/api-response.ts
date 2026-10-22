@@ -1,6 +1,10 @@
+import { ErrorCodes, type ErrorCode } from './error-codes';
+
 export type ApiResponse<T = unknown> = {
   success: boolean;
   message: string;
+  code?: string;
+  requestId?: string;
   data?: T;
 };
 
@@ -12,6 +16,9 @@ export function ok<T>(data: T, message = 'OK'): ApiResponse<T> {
   return response;
 }
 
-export function fail(message: string): ApiResponse<never> {
-  return { success: false, message };
+export function fail(
+  message: string,
+  code: ErrorCode | string = ErrorCodes.ERROR,
+): ApiResponse<never> {
+  return { success: false, message, code };
 }

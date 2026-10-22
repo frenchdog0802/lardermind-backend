@@ -82,15 +82,21 @@ Set `EXPO_PUBLIC_API_BASE_URL` to your API base (include `/api/` suffix).
 
 ---
 
-## Architecture (target)
+## Architecture
+
+LarderMind’s API is a **Cloudflare Worker** (`backend-cf/`): [Hono](https://hono.dev/) routes, **D1** (SQLite) for users, pantry, recipes, meal plans, shopping, and chat, **R2** for images, and **Cloudflare AI Gateway** for model calls (DeepSeek chat, OpenAI vision). Web (Vite) and mobile (Expo) are separate git remotes and talk to the Worker with the same Bearer JWT.
 
 ```mermaid
 flowchart LR
     Web[Web React] --> API[Workers Hono]
     Mobile[Expo Mobile] --> API
     API --> D1[(D1)]
-    API --> AI[Workers AI]
+    API --> R2[(R2)]
+    API --> GW[AI Gateway]
+    GW --> LLM[DeepSeek / OpenAI]
 ```
+
+Request path: CORS → JSON access log (`X-Request-Id`) → route. Mutations that the cooking agent proposes wait for `POST /api/chat/resume`. Passwords are PBKDF2-SHA256 (legacy HMAC-SHA1 is rehashed on login). Shopping-list writes accept an optional `Idempotency-Key` and `version`. Details and the client-facing contract: [backend-cf/README.md](./backend-cf/README.md).
 
 ---
 

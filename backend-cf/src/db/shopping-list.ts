@@ -17,6 +17,7 @@ export type ShoppingListItemRow = {
   has_been_added_to_pantry: number;
   created_at: number | null;
   updated_at: number | null;
+  version?: number | null;
 };
 
 export type ShoppingListItemDto = {
@@ -26,12 +27,14 @@ export type ShoppingListItemDto = {
   unit: string;
   checked: boolean;
   synced_to_pantry: boolean;
+  version: number;
   ingredient_id?: string;
   details: {
     quantity: number;
     unit: string;
     checked: boolean;
     synced_to_pantry: boolean;
+    version: number;
     ingredient_id?: string;
   };
 };
@@ -90,11 +93,13 @@ export function toShoppingListItemDto(
   const unit = row.unit ?? 'pcs';
   const checked = row.checked === 1;
   const synced_to_pantry = flagFromRow(row);
+  const version = row.version ?? 1;
   const details: ShoppingListItemDto['details'] = {
     quantity,
     unit,
     checked,
     synced_to_pantry,
+    version,
   };
   if (row.ingredient_id) details.ingredient_id = row.ingredient_id;
 
@@ -105,6 +110,7 @@ export function toShoppingListItemDto(
     unit,
     checked,
     synced_to_pantry,
+    version,
     details,
   };
   if (row.ingredient_id) dto.ingredient_id = row.ingredient_id;
@@ -171,7 +177,7 @@ async function setSyncedFlag(
   await db
     .prepare(
       `UPDATE shopping_list_items
-       SET has_been_added_to_pantry = ?, updated_at = ?
+       SET has_been_added_to_pantry = ?, updated_at = ?, version = COALESCE(version, 1) + 1
        WHERE id = ? AND user_id = ?`,
     )
     .bind(flag, now, id, userId)
@@ -304,14 +310,34 @@ export async function mergeAddShoppingListItem(
   return { item: updated, merged: true };
 }
 
+export class VersionConflictError extends Error {
+  current: ShoppingListItemRow;
+
+  constructor(current: ShoppingListItemRow) {
+    super('Version conflict');
+    this.name = 'VersionConflictError';
+    this.current = current;
+  }
+}
+
+export type DeleteShoppingResult =
+  | { status: 'deleted' }
+  | { status: 'not_found' }
+  | { status: 'conflict'; item: ShoppingListItemRow };
+
 export async function updateShoppingListItem(
   db: D1Database,
   userId: string,
   id: string,
   patch: ShoppingListItemPatch,
+  expectedVersion?: number,
 ): Promise<ShoppingListItemRow | null> {
   const existing = await getShoppingListItem(db, userId, id);
   if (!existing) return null;
+  const currentVersion = existing.version ?? 1;
+  if (expectedVersion !== undefined && expectedVersion !== currentVersion) {
+    throw new VersionConflictError(existing);
+  }
 
   const name = patch.name ?? existing.name;
   const quantity =
@@ -331,11 +357,11 @@ export async function updateShoppingListItem(
 
   const now = nowUnixSeconds();
 
-  await db
+  const result = await db
     .prepare(
       `UPDATE shopping_list_items
-       SET name = ?, quantity = ?, unit = ?, checked = ?, ingredient_id = ?, has_been_added_to_pantry = ?, updated_at = ?
-       WHERE id = ? AND user_id = ?`,
+       SET name = ?, quantity = ?, unit = ?, checked = ?, ingredient_id = ?, has_been_added_to_pantry = ?, updated_at = ?, version = COALESCE(version, 1) + 1
+       WHERE id = ? AND user_id = ? AND COALESCE(version, 1) = ?`,
     )
     .bind(
       name,
@@ -347,9 +373,15 @@ export async function updateShoppingListItem(
       now,
       id,
       userId,
+      currentVersion,
     )
     .run();
 
+  if ((result.meta?.changes ?? 0) === 0) {
+    const current = await getShoppingListItem(db, userId, id);
+    if (!current) return null;
+    throw new VersionConflictError(current);
+  }
   return getShoppingListItem(db, userId, id);
 }
 
@@ -357,12 +389,33 @@ export async function deleteShoppingListItem(
   db: D1Database,
   userId: string,
   id: string,
-): Promise<boolean> {
-  const result = await db
-    .prepare(`DELETE FROM shopping_list_items WHERE id = ? AND user_id = ?`)
-    .bind(id, userId)
-    .run();
-  return (result.meta?.changes ?? 0) > 0;
+  expectedVersion?: number,
+): Promise<DeleteShoppingResult> {
+  const existing = await getShoppingListItem(db, userId, id);
+  if (!existing) return { status: 'not_found' };
+  const currentVersion = existing.version ?? 1;
+  if (expectedVersion !== undefined && expectedVersion !== currentVersion) {
+    return { status: 'conflict', item: existing };
+  }
+  const result =
+    expectedVersion === undefined
+      ? await db
+          .prepare(
+            `DELETE FROM shopping_list_items WHERE id = ? AND user_id = ?`,
+          )
+          .bind(id, userId)
+          .run()
+      : await db
+          .prepare(
+            `DELETE FROM shopping_list_items
+             WHERE id = ? AND user_id = ? AND COALESCE(version, 1) = ?`,
+          )
+          .bind(id, userId, expectedVersion)
+          .run();
+  if ((result.meta?.changes ?? 0) > 0) return { status: 'deleted' };
+  const current = await getShoppingListItem(db, userId, id);
+  if (!current) return { status: 'not_found' };
+  return { status: 'conflict', item: current };
 }
 
 export function assertBatchSize(count: number): string | null {
@@ -422,7 +475,7 @@ export async function syncItemsToPantry(
       await db
         .prepare(
           `UPDATE shopping_list_items
-           SET quantity = ?, unit = ?, has_been_added_to_pantry = 1, updated_at = ?
+           SET quantity = ?, unit = ?, has_been_added_to_pantry = 1, updated_at = ?, version = COALESCE(version, 1) + 1
            WHERE id = ? AND user_id = ?`,
         )
         .bind(String(quantity), unit, now, item.id, userId)

@@ -21,6 +21,25 @@ function createMockDb() {
           return this;
         },
         async first<T>() {
+          if (sql.includes('FROM users')) {
+            const id = String(bound[0] ?? '');
+            return {
+              id,
+              first_name: 'A',
+              last_name: 'B',
+              name: 'A B',
+              email: 'a@example.com',
+              hashed_password: null,
+              salt: null,
+              role: 'user',
+              google_id: null,
+              picture: null,
+              created_at: 1,
+              updated_at: 1,
+              is_guest: 0,
+              expires_at: null,
+            } as T;
+          }
           const all = [...items.values()];
           if (sql.includes('LOWER(name)')) {
             const userId = bound[0] as string;

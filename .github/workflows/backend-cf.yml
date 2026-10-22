@@ -6,6 +6,10 @@ on:
     paths:
       - 'backend-cf/**'
       - '.github/workflows/backend-cf.yml'
+  pull_request:
+    paths:
+      - 'backend-cf/**'
+      - '.github/workflows/backend-cf.yml'
   workflow_dispatch:
     inputs:
       target:
@@ -22,8 +26,8 @@ env:
   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
 jobs:
-  install:
-    name: Install dependencies
+  check:
+    name: Typecheck and test
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -36,10 +40,13 @@ jobs:
           cache: npm
           cache-dependency-path: backend-cf/package-lock.json
       - run: npm ci --legacy-peer-deps
+      - run: npm run typecheck
+      - run: npm test
 
   migrate:
     name: Apply D1 migrations
-    needs: install
+    needs: check
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     defaults:
       run:
