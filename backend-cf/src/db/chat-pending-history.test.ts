@@ -18,6 +18,8 @@ describe('pendingInterruptForHistory', () => {
     };
 
     expect(pendingInterruptForHistory(pending)).toEqual({
+      interruptId: 'legacy:1:c1',
+      expiresAt: 1 + 20 * 60,
       pendingTools: [{ name: 'planMeals', argsSummary: '酸菜雞肉' }],
     });
   });

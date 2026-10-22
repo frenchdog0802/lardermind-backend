@@ -1,12 +1,23 @@
 import type { Env } from '../env';
 import {
-  clearPendingInterrupt,
+  claimPendingInterrupt,
+  finishHitlCheckpoint,
+  HITL_PENDING_TTL_SECONDS,
   getPendingInterrupt,
   getRecentMessagesForModel,
+  getSessionForUser,
+  insertHitlOutcomeMessage,
   insertMessage,
+  interruptIdOf,
+  isPendingExpired,
+  parseHitlCheckpoint,
+  reclaimStaleHitlClaim,
   releaseSessionLock,
+  saveHitlResultsAndClearPending,
   setPendingInterrupt,
   tryAcquireSessionLock,
+  type HitlCheckpoint,
+  type HitlToolResult,
   type PendingInterrupt,
 } from '../db/chat';
 import { findUserById } from '../db/users';
@@ -31,6 +42,9 @@ import { GUEST_TOOL_ALLOWLIST, isGuestAllowedTool } from './tools/guest-allowlis
 import { aggregateCard, type ToolCardEvent } from './tools/cards';
 import { executeTool, type ToolExecResult } from './tools/execute';
 import { isMutatingTool, toPendingTools } from './tools/hitl';
+import { validateToolArgs } from './tools/validate-args';
+import { recheckMutatingTargets } from './tools/recheck-targets';
+import { ErrorCodes } from '../lib/error-codes';
 import {
   looksLikeMutatingUserRequest,
   MUTATION_NO_TOOL_FALLBACK,
@@ -51,12 +65,14 @@ export type AgentTurnResult =
       message: string;
       data: {
         sessionId: string;
+        interruptId: string;
+        expiresAt: number;
         pendingTools: PendingInterrupt['pendingTools'];
       };
     }
   | { kind: 'busy'; message: string }
   | { kind: 'quota'; message: string }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; message: string; status?: number; code?: string };
 
 export type CompleteChatFn = (input: {
   env: Env;
@@ -125,19 +141,22 @@ async function appendToolResults(
   toolCalls: ParsedToolCall[],
   cardEvents: ToolCardEvent[],
   options?: { skipMutating?: boolean; execute?: ExecuteToolFn },
-): Promise<void> {
+): Promise<HitlToolResult[]> {
   const run = options?.execute ?? executeTool;
+  const saved: HitlToolResult[] = [];
   for (const tc of toolCalls) {
     if (options?.skipMutating && isMutatingTool(tc.name)) {
+      const content = JSON.stringify({
+        skipped: true,
+        reason: 'User rejected this action',
+      });
       messages.push({
         role: 'tool',
         tool_call_id: tc.id,
         name: tc.name,
-        content: JSON.stringify({
-          skipped: true,
-          reason: 'User rejected this action',
-        }),
+        content,
       });
+      saved.push({ id: tc.id, name: tc.name, content });
       continue;
     }
 
@@ -155,7 +174,15 @@ async function appendToolResults(
         data: result.cardData ?? {},
       });
     }
+    saved.push({
+      id: tc.id,
+      name: tc.name,
+      content: result.content,
+      ...(result.cardType ? { cardType: result.cardType } : {}),
+      ...(result.cardData ? { cardData: result.cardData } : {}),
+    });
   }
+  return saved;
 }
 
 // note: appendToolResults uses options.execute when provided via runToolLoop
@@ -279,8 +306,11 @@ async function runToolLoop(
 
     const hasMutating = result.toolCalls.some((tc) => isMutatingTool(tc.name));
     if (hasMutating) {
+      const createdAt = nowUnixSeconds();
       const pending: PendingInterrupt = {
-        createdAt: nowUnixSeconds(),
+        createdAt,
+        interruptId: crypto.randomUUID(),
+        expiresAt: createdAt + HITL_PENDING_TTL_SECONDS,
         pendingTools: toPendingTools(result.toolCalls),
         toolCalls: result.toolCalls.map((tc) => ({
           id: tc.id,
@@ -296,6 +326,8 @@ async function runToolLoop(
           'I need your approval before making these changes.',
         data: {
           sessionId,
+          interruptId: interruptIdOf(pending),
+          expiresAt: pending.expiresAt ?? createdAt + HITL_PENDING_TTL_SECONDS,
           pendingTools: pending.pendingTools,
         },
       };
@@ -347,11 +379,27 @@ export async function runAgentTurn(
     input.sessionId,
   );
   if (existingPending) {
-    return {
-      kind: 'busy',
-      message:
-        'There is a pending action waiting for your approval. Approve or reject it first.',
-    };
+    if (isPendingExpired(existingPending)) {
+      const dismissed = await dismissExpiredPending(
+        env,
+        input.userId,
+        input.sessionId,
+        existingPending,
+      );
+      if (!dismissed) {
+        return {
+          kind: 'busy',
+          message:
+            'There is a pending action waiting for your approval. Approve or reject it first.',
+        };
+      }
+    } else {
+      return {
+        kind: 'busy',
+        message:
+          'There is a pending action waiting for your approval. Approve or reject it first.',
+      };
+    }
   }
 
   const locked = await tryAcquireSessionLock(
@@ -466,6 +514,127 @@ export async function runAgentTurn(
   }
 }
 
+const EXPIRED_MESSAGE =
+  'That approval expired, so I did not make the changes.';
+const INTERRUPTED_MESSAGE =
+  'That approval was interrupted before it finished. I did not run it again. Check your kitchen and ask again if something is missing.';
+
+function fallbackFromResults(
+  decision: HitlCheckpoint['decision'],
+  interruptId: string,
+  toolResults: HitlToolResult[],
+): ChatResponsePayload {
+  if (decision === 'expire') {
+    return {
+      type: 'text',
+      message: EXPIRED_MESSAGE,
+      data: { expired: true, interruptId },
+    };
+  }
+  if (decision === 'reject') {
+    return {
+      type: 'text',
+      message: 'I did not make those changes.',
+      data: { interruptId },
+    };
+  }
+  const cardEvents: ToolCardEvent[] = toolResults
+    .filter((result) => result.cardType)
+    .map((result) => ({
+      toolName: result.name,
+      cardType: result.cardType as string,
+      data: result.cardData ?? {},
+    }));
+  const card = aggregateCard(cardEvents);
+  const detail = toolResults
+    .map((result) => result.content)
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, 1500);
+  return {
+    type: card.type,
+    message: detail
+      ? `I applied the approved changes, but could not write a summary. ${detail}`
+      : 'I applied the approved changes, but could not write a summary.',
+    data: { ...card.data, interruptId },
+  };
+}
+
+function outcomeFromCheckpoint(checkpoint: HitlCheckpoint): AgentTurnResult {
+  if (!checkpoint.response || checkpoint.httpStatus >= 400) {
+    return {
+      kind: 'error',
+      message: checkpoint.response?.message ?? 'Resume failed',
+      status: checkpoint.httpStatus || 500,
+      code: checkpoint.errorCode ?? ErrorCodes.ERROR,
+    };
+  }
+  return { kind: 'complete', response: checkpoint.response };
+}
+
+function checkpointAllows(
+  requested: string | undefined,
+  checkpoint: HitlCheckpoint,
+): boolean {
+  if (!requested) return true;
+  return requested === checkpoint.interruptId;
+}
+
+async function persistResumeOutcome(
+  db: D1Database,
+  input: { userId: string; sessionId: string },
+  claimToken: string,
+  checkpoint: HitlCheckpoint,
+): Promise<void> {
+  const saved: HitlCheckpoint = { ...checkpoint, phase: 'results_saved' };
+  await saveHitlResultsAndClearPending(
+    db,
+    input.userId,
+    input.sessionId,
+    claimToken,
+    saved,
+  );
+  if (checkpoint.response) {
+    await insertHitlOutcomeMessage(db, {
+      interruptId: checkpoint.interruptId,
+      userId: input.userId,
+      sessionId: input.sessionId,
+      content: checkpoint.response.message,
+      responseType: checkpoint.response.type,
+      cardData:
+        Object.keys(checkpoint.response.data).length > 0
+          ? checkpoint.response.data
+          : undefined,
+    });
+  }
+  await finishHitlCheckpoint(db, input.userId, input.sessionId, claimToken, {
+    ...checkpoint,
+    phase: 'complete',
+  });
+}
+
+async function dismissExpiredPending(
+  env: Env,
+  userId: string,
+  sessionId: string,
+  pending: PendingInterrupt,
+): Promise<boolean> {
+  const token = crypto.randomUUID();
+  const claimed = await claimPendingInterrupt(env.DB, userId, sessionId, token);
+  if (!claimed) return false;
+  const interruptId = interruptIdOf(pending);
+  const response = fallbackFromResults('expire', interruptId, []);
+  await persistResumeOutcome(env.DB, { userId, sessionId }, token, {
+    interruptId,
+    phase: 'complete',
+    decision: 'expire',
+    toolResults: [],
+    httpStatus: 200,
+    response,
+  });
+  return true;
+}
+
 export async function resumeAgentTurn(
   env: Env,
   input: {
@@ -473,39 +642,231 @@ export async function resumeAgentTurn(
     sessionId: string;
     decision: 'approve' | 'reject';
     note?: string;
+    interruptId?: string;
   },
   deps?: AgentDeps,
 ): Promise<AgentTurnResult> {
   const db = env.DB;
   const complete = deps?.completeChat ?? completeChat;
   const execute = deps?.executeTool ?? executeTool;
+  const requested = input.interruptId?.trim() || undefined;
 
-  const pending = await getPendingInterrupt(
-    db,
-    input.userId,
-    input.sessionId,
-  );
-  if (!pending) {
+  const session = await getSessionForUser(db, input.userId, input.sessionId);
+  if (!session) {
     return {
       kind: 'error',
-      message: 'No pending action to resume',
+      message: 'Session not found',
+      status: 404,
+      code: ErrorCodes.NOT_FOUND,
     };
   }
 
-  // Lock may already be held from the interrupt stream; tryAcquire is best-effort.
-  await tryAcquireSessionLock(db, input.userId, input.sessionId);
+  const pending = await getPendingInterrupt(db, input.userId, input.sessionId);
+  const checkpoint = parseHitlCheckpoint(session.hitl_checkpoint_json);
 
+  if (pending && requested && requested !== interruptIdOf(pending)) {
+    return {
+      kind: 'error',
+      message: 'interruptId does not match the pending action',
+      status: 409,
+      code: ErrorCodes.INTERRUPT_MISMATCH,
+    };
+  }
+
+  if (!pending) {
+    if (checkpoint?.phase === 'complete' && checkpointAllows(requested, checkpoint)) {
+      return outcomeFromCheckpoint(checkpoint);
+    }
+    if (checkpoint && requested && requested !== checkpoint.interruptId) {
+      return {
+        kind: 'error',
+        message: 'interruptId does not match the pending action',
+        status: 409,
+        code: ErrorCodes.INTERRUPT_MISMATCH,
+      };
+    }
+    if (checkpoint?.phase === 'results_saved') {
+      const token = crypto.randomUUID();
+      const reclaimed = await reclaimStaleHitlClaim(
+        db,
+        input.userId,
+        input.sessionId,
+        token,
+      );
+      if (!reclaimed) {
+        return {
+          kind: 'error',
+          message: 'This approval is already being applied.',
+          status: 409,
+          code: ErrorCodes.RESUME_IN_PROGRESS,
+        };
+      }
+      const response = fallbackFromResults(
+        checkpoint.decision,
+        checkpoint.interruptId,
+        checkpoint.toolResults ?? [],
+      );
+      const done: HitlCheckpoint = {
+        ...checkpoint,
+        phase: 'complete',
+        httpStatus: 200,
+        response,
+      };
+      await insertHitlOutcomeMessage(db, {
+        interruptId: checkpoint.interruptId,
+        userId: input.userId,
+        sessionId: input.sessionId,
+        content: response.message,
+        responseType: response.type,
+        cardData: response.data,
+      });
+      await finishHitlCheckpoint(db, input.userId, input.sessionId, token, done);
+      return { kind: 'complete', response };
+    }
+    return {
+      kind: 'error',
+      message: 'No pending action to resume',
+      status: 404,
+      code: ErrorCodes.NO_PENDING_ACTION,
+    };
+  }
+
+  const claimToken = crypto.randomUUID();
+  const claimed = await claimPendingInterrupt(
+    db,
+    input.userId,
+    input.sessionId,
+    claimToken,
+  );
+  if (!claimed) {
+    const again = await getSessionForUser(db, input.userId, input.sessionId);
+    const againCheckpoint = parseHitlCheckpoint(again?.hitl_checkpoint_json);
+    if (
+      againCheckpoint?.phase === 'complete' &&
+      checkpointAllows(requested, againCheckpoint)
+    ) {
+      return outcomeFromCheckpoint(againCheckpoint);
+    }
+    const lockedAt = again?.locked_at ?? null;
+    const stale =
+      lockedAt != null &&
+      lockedAt < nowUnixSeconds() - 90 &&
+      again?.pending_claim_token;
+    if (stale) {
+      const token = crypto.randomUUID();
+      const reclaimed = await reclaimStaleHitlClaim(
+        db,
+        input.userId,
+        input.sessionId,
+        token,
+      );
+      if (reclaimed) {
+        const interruptId = interruptIdOf(pending);
+        const response = {
+          type: 'text',
+          message: INTERRUPTED_MESSAGE,
+          data: { interruptId },
+        };
+        await persistResumeOutcome(db, input, token, {
+          interruptId,
+          phase: 'complete',
+          decision: 'reject',
+          toolResults: [],
+          httpStatus: 200,
+          response,
+        });
+        return { kind: 'complete', response };
+      }
+    }
+    return {
+      kind: 'error',
+      message: 'This approval is already being applied.',
+      status: 409,
+      code: ErrorCodes.RESUME_IN_PROGRESS,
+    };
+  }
+
+  const interruptId = interruptIdOf(pending);
+  const expired = isPendingExpired(pending);
+  const decision: HitlCheckpoint['decision'] = expired
+    ? 'expire'
+    : input.decision;
+
+  const toolCalls: ParsedToolCall[] = pending.toolCalls.map((tc) => ({
+    id: tc.id,
+    name: tc.name,
+    arguments: tc.arguments,
+  }));
+
+  if (decision === 'approve') {
+    const argErrors = toolCalls.flatMap((tc) =>
+      validateToolArgs(tc.name, tc.arguments),
+    );
+    if (argErrors.length) {
+      const message = argErrors.slice(0, 5).join('; ');
+      const response = { type: 'text', message, data: { interruptId } };
+      await persistResumeOutcome(db, input, claimToken, {
+        interruptId,
+        phase: 'complete',
+        decision: 'reject',
+        toolResults: [],
+        httpStatus: 400,
+        errorCode: ErrorCodes.TOOL_ARGS_INVALID,
+        response,
+      });
+      return {
+        kind: 'error',
+        message,
+        status: 400,
+        code: ErrorCodes.TOOL_ARGS_INVALID,
+      };
+    }
+    const missing = await recheckMutatingTargets(db, input.userId, toolCalls);
+    if (missing.length) {
+      const message =
+        'Some items are no longer available, so nothing was changed.';
+      const response = {
+        type: 'text',
+        message,
+        data: { interruptId, missing },
+      };
+      await persistResumeOutcome(db, input, claimToken, {
+        interruptId,
+        phase: 'complete',
+        decision: 'reject',
+        toolResults: [],
+        httpStatus: 409,
+        errorCode: ErrorCodes.TARGET_MISSING,
+        response,
+      });
+      return {
+        kind: 'error',
+        message,
+        status: 409,
+        code: ErrorCodes.TARGET_MISSING,
+      };
+    }
+  }
+
+  if (decision === 'expire') {
+    const response = fallbackFromResults('expire', interruptId, []);
+    await persistResumeOutcome(db, input, claimToken, {
+      interruptId,
+      phase: 'complete',
+      decision: 'expire',
+      toolResults: [],
+      httpStatus: 200,
+      response,
+    });
+    return { kind: 'complete', response };
+  }
+
+  const messages = pendingToMessages(pending.messages);
+  const cardEvents: ToolCardEvent[] = [];
+  let toolResults: HitlToolResult[] = [];
   try {
-    const messages = pendingToMessages(pending.messages);
-    const cardEvents: ToolCardEvent[] = [];
-    const toolCalls: ParsedToolCall[] = pending.toolCalls.map((tc) => ({
-      id: tc.id,
-      name: tc.name,
-      arguments: tc.arguments,
-    }));
-
-    if (input.decision === 'approve') {
-      await appendToolResults(
+    if (decision === 'approve') {
+      toolResults = await appendToolResults(
         db,
         input.userId,
         messages,
@@ -514,7 +875,7 @@ export async function resumeAgentTurn(
         { execute },
       );
     } else {
-      await appendToolResults(
+      toolResults = await appendToolResults(
         db,
         input.userId,
         messages,
@@ -522,48 +883,65 @@ export async function resumeAgentTurn(
         cardEvents,
         { skipMutating: true, execute },
       );
-      if (input.note?.trim()) {
-        messages.push({
-          role: 'user',
-          content: `I rejected the proposed changes. Note: ${input.note.trim()}`,
-        });
-      } else {
-        messages.push({
-          role: 'user',
-          content: 'I rejected the proposed changes. Please acknowledge briefly.',
-        });
+      messages.push({
+        role: 'user',
+        content: input.note?.trim()
+          ? `I rejected the proposed changes. Note: ${input.note.trim()}`
+          : 'I rejected the proposed changes. Please acknowledge briefly.',
+      });
+    }
+
+    const partial: HitlCheckpoint = {
+      interruptId,
+      phase: 'results_saved',
+      decision,
+      toolResults,
+      httpStatus: 200,
+    };
+    await saveHitlResultsAndClearPending(
+      db,
+      input.userId,
+      input.sessionId,
+      claimToken,
+      partial,
+    );
+
+    let response: ChatResponsePayload;
+    try {
+      response = await finalizeText(env, messages, cardEvents, complete);
+      if (decision === 'reject' && response.type !== 'text') {
+        const readOnlyEvents = cardEvents.filter(
+          (event) => !isMutatingTool(event.toolName),
+        );
+        const card = aggregateCard(readOnlyEvents);
+        response.type = card.type;
+        response.data = card.data;
       }
+    } catch {
+      response = fallbackFromResults(decision, interruptId, toolResults);
     }
 
-    const response = await finalizeText(env, messages, cardEvents, complete);
-    if (input.decision === 'reject' && response.type !== 'text') {
-      // Reject should not surface mutating cards; keep any read-only cards.
-      const readOnlyEvents = cardEvents.filter(
-        (e) => !isMutatingTool(e.toolName),
-      );
-      const card = aggregateCard(readOnlyEvents);
-      response.type = card.type;
-      response.data = card.data;
-    }
-
-    await insertMessage(db, {
+    await insertHitlOutcomeMessage(db, {
+      interruptId,
       userId: input.userId,
       sessionId: input.sessionId,
-      role: 'assistant',
       content: response.message,
       responseType: response.type,
       cardData:
         Object.keys(response.data).length > 0 ? response.data : undefined,
     });
-    await clearPendingInterrupt(db, input.userId, input.sessionId);
-
+    await finishHitlCheckpoint(db, input.userId, input.sessionId, claimToken, {
+      ...partial,
+      phase: 'complete',
+      httpStatus: 200,
+      response,
+    });
     return { kind: 'complete', response };
   } catch (error) {
     await releaseSessionLock(db, input.userId, input.sessionId).catch(
       () => undefined,
     );
-    const message =
-      error instanceof Error ? error.message : 'Resume failed';
-    return { kind: 'error', message };
+    const message = error instanceof Error ? error.message : 'Resume failed';
+    return { kind: 'error', message, status: 500, code: ErrorCodes.INTERNAL };
   }
 }

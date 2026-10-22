@@ -4,7 +4,7 @@ import { signJwt } from '../lib/jwt';
 import { uploadRoutes } from '../routes/upload';
 import { mediaRoutes } from '../routes/media';
 import type { Env } from '../env';
-import { FREE_IMAGE_UPLOAD_LIMIT } from '../db/quotas';
+import { FREE_IMAGE_UPLOAD_LIMIT, startOfUtcMonth } from '../db/quotas';
 
 const JWT_SECRET = 'x'.repeat(32);
 const USER_A = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -82,7 +82,7 @@ function createMockDb(users: Record<string, { role: string }>) {
     quotas.set(userId, {
       user_id: userId,
       image_uploads: 0,
-      image_period_start: Math.floor(Date.UTC(2026, 8, 1) / 1000),
+      image_period_start: startOfUtcMonth(Math.floor(Date.now() / 1000)),
     });
   }
 
@@ -274,7 +274,7 @@ describe('upload / media routes', () => {
     quotas.set(USER_A, {
       user_id: USER_A,
       image_uploads: FREE_IMAGE_UPLOAD_LIMIT,
-      image_period_start: Math.floor(Date.UTC(2026, 8, 1) / 1000),
+      image_period_start: startOfUtcMonth(Math.floor(Date.now() / 1000)),
     });
 
     const form = new FormData();

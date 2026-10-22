@@ -17,13 +17,18 @@ import { recipeRoutes } from './routes/recipe';
 import { mealPlanRoutes } from './routes/meal-plan';
 import { unitConversionRoutes } from './routes/unit-conversions';
 import { fail } from './lib/api-response';
+import { ErrorCodes } from './lib/error-codes';
 import { purgeExpiredGuests } from './db/guests';
+import { requestLogMiddleware } from './middleware/request-log';
+import { openApiRoutes } from './routes/openapi';
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: { requestId: string } }>();
 
 app.use('*', corsMiddleware);
+app.use('*', requestLogMiddleware);
 
 app.route('/', healthRoutes);
+app.route('/', openApiRoutes);
 app.route('/', authRoutes);
 app.route('/', chatRoutes);
 app.route('/', subscriptionRoutes);
@@ -39,11 +44,25 @@ app.route('/', recipeRoutes);
 app.route('/', mealPlanRoutes);
 app.route('/', unitConversionRoutes);
 
-app.notFound((c) => c.json(fail('Not found'), 404));
+app.notFound((c) => c.json(fail('Not found', ErrorCodes.NOT_FOUND), 404));
 
 app.onError((err, c) => {
-  console.error(err);
-  return c.json(fail(err.message || 'Internal server error'), 500);
+  const requestId = c.get('requestId');
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      msg: 'unhandled',
+      requestId,
+      error: err.message || 'Internal server error',
+    }),
+  );
+  return c.json(
+    {
+      ...fail(err.message || 'Internal server error', ErrorCodes.INTERNAL),
+      ...(requestId ? { requestId } : {}),
+    },
+    500,
+  );
 });
 
 export default {

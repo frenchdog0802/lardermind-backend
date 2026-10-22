@@ -1,5 +1,22 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { ok, fail } from '../lib/api-response';
+import { ErrorCodes } from '../lib/error-codes';
+import { parseJsonBody } from '../lib/validate';
+import {
+  signupBodySchema,
+  signinBodySchema,
+  googleLoginBodySchema,
+  claimGuestBodySchema,
+} from '../schemas/auth';
+import {
+  AUTH_LIMITS,
+  AuthRateLimitError,
+  assertAuthAllowed,
+  googleIpSubject,
+  signinEmailSubject,
+  signinIpSubject,
+  signupIpSubject,
+} from '../db/auth-rate-limit';
 import { signJwt, verifyJwt } from '../lib/jwt';
 import { encodeBase64UrlJson } from '../lib/base64url';
 import { verifyGoogleIdToken } from '../lib/google-id-token';
@@ -23,30 +40,24 @@ import { clientIp, requireAuth } from '../middleware/auth';
 import type { AuthVariables } from '../middleware/auth';
 import type { Env } from '../env';
 
-type SignupBody = {
-  first_name?: string;
-  last_name?: string;
-  email?: string;
-  password?: string;
-  guest_token?: string;
-};
-
-type SigninBody = {
-  email?: string;
-  password?: string;
-  guest_token?: string;
-};
-
-type GoogleLoginBody = {
-  token?: string;
-  guest_token?: string;
-};
-
-type ClaimGuestBody = {
-  guest_token?: string;
-};
-
 export const authRoutes = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
+
+async function enforceAuthLimit(
+  c: Context<{ Bindings: Env; Variables: AuthVariables }>,
+  subject: string,
+  limit: number,
+): Promise<Response | null> {
+  try {
+    await assertAuthAllowed(c.env.DB, subject, limit);
+    return null;
+  } catch (error) {
+    if (error instanceof AuthRateLimitError) {
+      c.header('Retry-After', String(error.retryAfterSeconds));
+      return c.json(fail(error.message, ErrorCodes.RATE_LIMITED), 429);
+    }
+    throw error;
+  }
+}
 
 function jwtExpires(env: Env): number {
   const parsed = Number.parseInt(env.JWT_EXPIRES_IN_SECONDS ?? '2592000', 10);
@@ -140,10 +151,15 @@ authRoutes.post('/api/auth/guest', async (c) => {
 });
 
 authRoutes.post('/api/auth/signup', async (c) => {
-  const body = await c.req.json<SignupBody>();
-  if (!body.first_name || !body.last_name || !body.email || !body.password) {
-    return c.json(fail('Missing required fields'), 400);
-  }
+  const parsed = await parseJsonBody(c, signupBodySchema);
+  if (!parsed.ok) return c.json(fail(parsed.message, parsed.code), 400);
+  const limited = await enforceAuthLimit(
+    c,
+    signupIpSubject(clientIp(c)),
+    AUTH_LIMITS.signupIp,
+  );
+  if (limited) return limited;
+  const body = parsed.data;
   try {
     const user = await createUser(c.env, {
       first_name: body.first_name,
@@ -166,10 +182,21 @@ authRoutes.post('/api/auth/signup', async (c) => {
 });
 
 authRoutes.post('/api/auth/signin', async (c) => {
-  const body = await c.req.json<SigninBody>();
-  if (!body.email || !body.password) {
-    return c.json(fail('Missing email or password'), 400);
-  }
+  const parsed = await parseJsonBody(c, signinBodySchema);
+  if (!parsed.ok) return c.json(fail(parsed.message, parsed.code), 400);
+  const body = parsed.data;
+  const limitedIp = await enforceAuthLimit(
+    c,
+    signinIpSubject(clientIp(c)),
+    AUTH_LIMITS.signinIp,
+  );
+  if (limitedIp) return limitedIp;
+  const limitedEmail = await enforceAuthLimit(
+    c,
+    signinEmailSubject(body.email),
+    AUTH_LIMITS.signinEmail,
+  );
+  if (limitedEmail) return limitedEmail;
   try {
     const user = await signInUser(c.env, {
       email: body.email,
@@ -194,10 +221,15 @@ authRoutes.get('/api/auth/signout', (c) =>
 );
 
 authRoutes.post('/api/auth/google-login', async (c) => {
-  const body = await c.req.json<GoogleLoginBody>();
-  if (!body.token) {
-    return c.json(fail('Missing Google ID token'), 400);
-  }
+  const parsed = await parseJsonBody(c, googleLoginBodySchema);
+  if (!parsed.ok) return c.json(fail(parsed.message, parsed.code), 400);
+  const limited = await enforceAuthLimit(
+    c,
+    googleIpSubject(clientIp(c)),
+    AUTH_LIMITS.googleIp,
+  );
+  if (limited) return limited;
+  const body = parsed.data;
   try {
     const data = await loginWithGoogleIdToken(
       c.env,
@@ -219,12 +251,10 @@ authRoutes.post('/api/auth/claim-guest', requireAuth, async (c) => {
   if (c.get('isGuest')) {
     return c.json(fail('Sign in with a real account to claim a guest kitchen'), 403);
   }
-  const body = await c.req.json<ClaimGuestBody>().catch(() => ({} as ClaimGuestBody));
-  if (!body.guest_token?.trim()) {
-    return c.json(fail('guest_token is required'), 400);
-  }
+  const parsed = await parseJsonBody(c, claimGuestBodySchema);
+  if (!parsed.ok) return c.json(fail(parsed.message, parsed.code), 400);
   try {
-    await maybeClaimGuest(c.env, c.get('userId'), body.guest_token);
+    await maybeClaimGuest(c.env, c.get('userId'), parsed.data.guest_token);
     return c.json(ok({ claimed: true }));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Claim failed';
@@ -245,6 +275,22 @@ authRoutes.post('/api/auth/google-callback', async (c) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'FRONTEND_URL not configured';
     return c.json(fail(message), 500);
+  }
+
+  try {
+    await assertAuthAllowed(
+      c.env.DB,
+      googleIpSubject(clientIp(c)),
+      AUTH_LIMITS.googleIp,
+    );
+  } catch (error) {
+    if (error instanceof AuthRateLimitError) {
+      return c.redirect(
+        `${frontend}/#google_auth_error=${encodeURIComponent(error.message)}`,
+        302,
+      );
+    }
+    throw error;
   }
 
   try {

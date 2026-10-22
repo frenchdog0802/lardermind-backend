@@ -52,6 +52,25 @@ function createMockDb() {
           return this;
         },
         async first<T>() {
+          if (sql.includes('FROM users')) {
+            const id = String(bound[0] ?? USER_A);
+            return {
+              id,
+              first_name: 'A',
+              last_name: 'B',
+              name: 'A B',
+              email: 'a@example.com',
+              hashed_password: null,
+              salt: null,
+              role: 'user',
+              google_id: null,
+              picture: null,
+              created_at: 1,
+              updated_at: 1,
+              is_guest: 0,
+              expires_at: null,
+            } as T;
+          }
           if (sql.includes('FROM user_preferences')) {
             const userId = bound[0] as string;
             return (

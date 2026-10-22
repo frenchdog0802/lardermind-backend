@@ -1,8 +1,16 @@
 import { Hono } from 'hono';
 import { fail, ok } from '../lib/api-response';
+import { ErrorCodes } from '../lib/error-codes';
+import { parseJsonBody } from '../lib/validate';
 import type { Env } from '../env';
 import type { AuthVariables } from '../middleware/auth';
 import { requireAuth, requireNonGuest } from '../middleware/auth';
+import {
+  abortIdempotency,
+  beginIdempotency,
+  finishIdempotency,
+  normalizeIdempotencyKey,
+} from '../db/idempotency';
 import {
   assertBatchSize,
   mergeAddShoppingListItem,
@@ -13,10 +21,19 @@ import {
   toShoppingListItemDto,
   unsyncItemsFromPantry,
   updateShoppingListItem,
-  type ShoppingListItemInput,
-  type ShoppingListItemPatch,
-  type SyncToPantryItemInput,
+  VersionConflictError,
+  type ShoppingListItemRow,
 } from '../db/shopping-list';
+import {
+  expectedVersionFromBody,
+  normalizeShoppingCreate,
+  normalizeShoppingPatch,
+  normalizeSyncItems,
+  normalizeUnsyncIds,
+  shoppingWriteBodySchema,
+  syncToPantryBodySchema,
+  unsyncBodySchema,
+} from '../schemas/shopping-list';
 
 export const shoppingListRoutes = new Hono<{
   Bindings: Env;
@@ -26,167 +43,81 @@ export const shoppingListRoutes = new Hono<{
 shoppingListRoutes.use('/api/shopping-list', requireAuth, requireNonGuest);
 shoppingListRoutes.use('/api/shopping-list/*', requireAuth, requireNonGuest);
 
-type LooseRecord = Record<string, unknown>;
+type JsonResult = { status: number; body: unknown };
 
-function asRecord(value: unknown): LooseRecord | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as LooseRecord)
-    : null;
+function conflictResponse(row: ShoppingListItemRow): JsonResult {
+  return {
+    status: 409,
+    body: {
+      ...fail('Version conflict', ErrorCodes.VERSION_CONFLICT),
+      data: { current: toShoppingListItemDto(row) },
+    },
+  };
 }
 
-function pickField(
-  body: LooseRecord,
-  details: LooseRecord | null,
-  key: string,
-): unknown {
-  if (body[key] !== undefined && body[key] !== null) return body[key];
-  if (details && details[key] !== undefined && details[key] !== null) {
-    return details[key];
+function parseExpectedHeader(raw: string | undefined): number | undefined | 'invalid' {
+  if (raw == null || raw.trim() === '') return undefined;
+  if (!/^\d+$/.test(raw.trim())) return 'invalid';
+  return Number(raw.trim());
+}
+
+function resolveExpectedVersion(
+  fromBody: number | undefined,
+  headerRaw: string | undefined,
+): { ok: true; version?: number } | { ok: false; message: string } {
+  const header = parseExpectedHeader(headerRaw);
+  if (header === 'invalid') {
+    return { ok: false, message: 'X-Expected-Version must be a non-negative integer' };
   }
-  return undefined;
-}
-
-function parseQuantity(raw: unknown): number | null {
-  if (raw === undefined || raw === null || raw === '') return null;
-  const n = typeof raw === 'number' ? raw : Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
-
-function parseChecked(raw: unknown): boolean {
-  if (raw === true || raw === 1 || raw === '1') return true;
-  return false;
-}
-
-type ParseResult =
-  | { ok: true; value: ShoppingListItemInput }
-  | { ok: false; message: string };
-
-function parseCreateInput(body: unknown): ParseResult {
-  const root = asRecord(body);
-  if (!root) return { ok: false, message: 'Invalid body' };
-  const details = asRecord(root.details);
-
-  const nameRaw = pickField(root, details, 'name');
-  const name = typeof nameRaw === 'string' ? nameRaw.trim() : '';
-  if (!name) return { ok: false, message: 'Name is required' };
-
-  const quantity = parseQuantity(pickField(root, details, 'quantity'));
-  if (quantity === null) return { ok: false, message: 'Invalid quantity' };
-
-  const unitRaw = pickField(root, details, 'unit');
-  const unit =
-    typeof unitRaw === 'string' && unitRaw.trim() ? unitRaw.trim() : 'pcs';
-
-  const checked = parseChecked(pickField(root, details, 'checked'));
-  const ingredientRaw = pickField(root, details, 'ingredient_id');
-
-  const value: ShoppingListItemInput = { name, quantity, unit, checked };
-  if (typeof ingredientRaw === 'string' && ingredientRaw.trim()) {
-    value.ingredient_id = ingredientRaw.trim();
+  if (fromBody !== undefined && header !== undefined && fromBody !== header) {
+    return { ok: false, message: 'version and X-Expected-Version disagree' };
   }
-  return { ok: true, value };
+  return { ok: true, version: fromBody ?? header };
 }
 
-function parsePatchInput(
-  body: unknown,
-): { ok: true; value: ShoppingListItemPatch } | { ok: false; message: string } {
-  const root = asRecord(body);
-  if (!root) return { ok: false, message: 'Invalid body' };
-  const details = asRecord(root.details);
-  const patch: ShoppingListItemPatch = {};
-
-  const nameRaw = pickField(root, details, 'name');
-  if (nameRaw !== undefined) {
-    if (typeof nameRaw !== 'string' || !nameRaw.trim()) {
-      return { ok: false, message: 'Name is required' };
+async function runIdempotent(
+  c: { env: Env; req: { header: (name: string) => string | undefined; method: string }; get: (key: 'userId') => string; json: (body: unknown, status?: number) => Response; header: (name: string, value: string) => void },
+  routeKey: string,
+  run: () => Promise<JsonResult>,
+): Promise<Response> {
+  const parsedKey = normalizeIdempotencyKey(c.req.header('Idempotency-Key'));
+  if (!parsedKey.ok) {
+    return c.json(fail(parsedKey.message, ErrorCodes.VALIDATION_ERROR), 400);
+  }
+  const gate = await beginIdempotency(
+    c.env.DB,
+    c.get('userId'),
+    parsedKey.key,
+    c.req.method,
+    routeKey,
+  );
+  if (gate.kind === 'replay') {
+    c.header('Idempotency-Replayed', 'true');
+    return c.json(gate.body, gate.status);
+  }
+  if (gate.kind === 'conflict') {
+    return c.json(gate.body, gate.status);
+  }
+  try {
+    const result = await run();
+    if (gate.kind === 'owned' && parsedKey.key) {
+      await finishIdempotency(
+        c.env.DB,
+        c.get('userId'),
+        parsedKey.key,
+        result.status,
+        result.body,
+      );
     }
-    patch.name = nameRaw.trim();
-  }
-
-  const qtyRaw = pickField(root, details, 'quantity');
-  if (qtyRaw !== undefined) {
-    const quantity = parseQuantity(qtyRaw);
-    if (quantity === null) return { ok: false, message: 'Invalid quantity' };
-    patch.quantity = quantity;
-  }
-
-  const unitRaw = pickField(root, details, 'unit');
-  if (unitRaw !== undefined) {
-    patch.unit =
-      typeof unitRaw === 'string' && unitRaw.trim() ? unitRaw.trim() : 'pcs';
-  }
-
-  const checkedRaw = pickField(root, details, 'checked');
-  if (checkedRaw !== undefined) patch.checked = parseChecked(checkedRaw);
-
-  const ingredientRaw = pickField(root, details, 'ingredient_id');
-  if (ingredientRaw !== undefined) {
-    patch.ingredient_id =
-      typeof ingredientRaw === 'string' && ingredientRaw.trim()
-        ? ingredientRaw.trim()
-        : undefined;
-  }
-
-  return { ok: true, value: patch };
-}
-
-function parseSyncToPantryBody(
-  body: unknown,
-):
-  | { ok: true; value: SyncToPantryItemInput[] }
-  | { ok: false; message: string } {
-  const root = asRecord(body);
-  if (!root) return { ok: false, message: 'Invalid body' };
-  if (!Array.isArray(root.items)) {
-    return { ok: false, message: 'items is required' };
-  }
-  const sizeError = assertBatchSize(root.items.length);
-  if (sizeError) return { ok: false, message: sizeError };
-
-  const items: SyncToPantryItemInput[] = [];
-  for (const raw of root.items) {
-    const rec = asRecord(raw);
-    if (!rec || typeof rec.id !== 'string' || !rec.id.trim()) {
-      return { ok: false, message: 'Each item requires id' };
+    return c.json(result.body, result.status);
+  } catch (error) {
+    if (gate.kind === 'owned' && parsedKey.key) {
+      await abortIdempotency(c.env.DB, c.get('userId'), parsedKey.key).catch(
+        () => undefined,
+      );
     }
-    const entry: SyncToPantryItemInput = { id: rec.id.trim() };
-    if (rec.quantity !== undefined) {
-      const quantity = parseQuantity(rec.quantity);
-      if (quantity === null) {
-        return { ok: false, message: 'Invalid quantity' };
-      }
-      entry.quantity = quantity;
-    }
-    if (rec.unit !== undefined) {
-      entry.unit =
-        typeof rec.unit === 'string' && rec.unit.trim()
-          ? rec.unit.trim()
-          : 'pcs';
-    }
-    items.push(entry);
+    throw error;
   }
-  return { ok: true, value: items };
-}
-
-function parseUnsyncBody(
-  body: unknown,
-): { ok: true; value: string[] } | { ok: false; message: string } {
-  const root = asRecord(body);
-  if (!root) return { ok: false, message: 'Invalid body' };
-  if (!Array.isArray(root.item_ids)) {
-    return { ok: false, message: 'item_ids is required' };
-  }
-  const sizeError = assertBatchSize(root.item_ids.length);
-  if (sizeError) return { ok: false, message: sizeError };
-
-  const ids: string[] = [];
-  for (const raw of root.item_ids) {
-    if (typeof raw !== 'string' || !raw.trim()) {
-      return { ok: false, message: 'Each item_id must be a non-empty string' };
-    }
-    ids.push(raw.trim());
-  }
-  return { ok: true, value: ids };
 }
 
 shoppingListRoutes.get('/api/shopping-list', async (c) => {
@@ -198,88 +129,108 @@ shoppingListRoutes.get('/api/shopping-list', async (c) => {
 
 shoppingListRoutes.post('/api/shopping-list', async (c) => {
   const userId = c.get('userId');
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json(fail('Invalid JSON'), 400);
-  }
-  const parsed = parseCreateInput(body);
-  if (!parsed.ok) return c.json(fail(parsed.message), 400);
-
-  const { item: row } = await mergeAddShoppingListItem(
-    c.env.DB,
-    userId,
-    parsed.value,
-  );
-  return c.json(ok(toShoppingListItemDto(row)), 201);
+  return runIdempotent(c, 'POST /api/shopping-list', async () => {
+    const parsed = await parseJsonBody(c, shoppingWriteBodySchema);
+    if (!parsed.ok) {
+      return { status: 400, body: fail(parsed.message, parsed.code) };
+    }
+    const input = normalizeShoppingCreate(parsed.data);
+    if (!input.ok) return { status: 400, body: fail(input.message, ErrorCodes.VALIDATION_ERROR) };
+    const { item: row } = await mergeAddShoppingListItem(c.env.DB, userId, input.value);
+    return { status: 201, body: ok(toShoppingListItemDto(row)) };
+  });
 });
 
 shoppingListRoutes.post('/api/shopping-list/sync-to-pantry', async (c) => {
   const userId = c.get('userId');
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json(fail('Invalid JSON'), 400);
-  }
-  const parsed = parseSyncToPantryBody(body);
-  if (!parsed.ok) return c.json(fail(parsed.message), 400);
-
-  const result = await syncItemsToPantry(c.env.DB, userId, parsed.value);
+  const parsed = await parseJsonBody(c, syncToPantryBodySchema);
+  if (!parsed.ok) return c.json(fail(parsed.message, parsed.code), 400);
+  const items = normalizeSyncItems(parsed.data, assertBatchSize);
+  if (!items.ok) return c.json(fail(items.message, ErrorCodes.VALIDATION_ERROR), 400);
+  const result = await syncItemsToPantry(c.env.DB, userId, items.value);
   return c.json(ok(result));
 });
 
 shoppingListRoutes.post('/api/shopping-list/unsync-from-pantry', async (c) => {
   const userId = c.get('userId');
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json(fail('Invalid JSON'), 400);
-  }
-  const parsed = parseUnsyncBody(body);
-  if (!parsed.ok) return c.json(fail(parsed.message), 400);
-
-  const result = await unsyncItemsFromPantry(c.env.DB, userId, parsed.value);
+  const parsed = await parseJsonBody(c, unsyncBodySchema);
+  if (!parsed.ok) return c.json(fail(parsed.message, parsed.code), 400);
+  const ids = normalizeUnsyncIds(parsed.data, assertBatchSize);
+  if (!ids.ok) return c.json(fail(ids.message, ErrorCodes.VALIDATION_ERROR), 400);
+  const result = await unsyncItemsFromPantry(c.env.DB, userId, ids.value);
   return c.json(ok(result));
 });
 
 shoppingListRoutes.get('/api/shopping-list/:id', async (c) => {
   const userId = c.get('userId');
   const row = await getShoppingListItem(c.env.DB, userId, c.req.param('id'));
-  if (!row) return c.json(fail('Not found'), 404);
+  if (!row) return c.json(fail('Not found', ErrorCodes.NOT_FOUND), 404);
   return c.json(ok(toShoppingListItemDto(row)));
 });
 
 shoppingListRoutes.put('/api/shopping-list/:id', async (c) => {
   const userId = c.get('userId');
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json(fail('Invalid JSON'), 400);
-  }
-  const parsed = parsePatchInput(body);
-  if (!parsed.ok) return c.json(fail(parsed.message), 400);
-
-  const updated = await updateShoppingListItem(
-    c.env.DB,
-    userId,
-    c.req.param('id'),
-    parsed.value,
-  );
-  if (!updated) return c.json(fail('Not found'), 404);
-  return c.json(ok(toShoppingListItemDto(updated)));
+  const id = c.req.param('id');
+  return runIdempotent(c, `PUT /api/shopping-list/${id}`, async () => {
+    const parsed = await parseJsonBody(c, shoppingWriteBodySchema);
+    if (!parsed.ok) return { status: 400, body: fail(parsed.message, parsed.code) };
+    const expected = resolveExpectedVersion(
+      expectedVersionFromBody(parsed.data),
+      c.req.header('X-Expected-Version'),
+    );
+    if (!expected.ok) {
+      return { status: 400, body: fail(expected.message, ErrorCodes.VALIDATION_ERROR) };
+    }
+    const patch = normalizeShoppingPatch(parsed.data);
+    if (!patch.ok) {
+      return { status: 400, body: fail(patch.message, ErrorCodes.VALIDATION_ERROR) };
+    }
+    try {
+      const updated = await updateShoppingListItem(
+        c.env.DB,
+        userId,
+        id,
+        patch.value,
+        expected.version,
+      );
+      if (!updated) return { status: 404, body: fail('Not found', ErrorCodes.NOT_FOUND) };
+      return { status: 200, body: ok(toShoppingListItemDto(updated)) };
+    } catch (error) {
+      if (error instanceof VersionConflictError) return conflictResponse(error.current);
+      throw error;
+    }
+  });
 });
 
 shoppingListRoutes.delete('/api/shopping-list/:id', async (c) => {
   const userId = c.get('userId');
-  const deleted = await deleteShoppingListItem(
-    c.env.DB,
-    userId,
-    c.req.param('id'),
-  );
-  if (!deleted) return c.json(fail('Not found'), 404);
-  return c.json(ok(null));
+  const id = c.req.param('id');
+  return runIdempotent(c, `DELETE /api/shopping-list/${id}`, async () => {
+    const queryVersion = c.req.query('version');
+    let fromQuery: number | undefined;
+    if (queryVersion != null && queryVersion.trim() !== '') {
+      if (!/^\d+$/.test(queryVersion.trim())) {
+        return {
+          status: 400,
+          body: fail('version must be a non-negative integer', ErrorCodes.VALIDATION_ERROR),
+        };
+      }
+      fromQuery = Number(queryVersion.trim());
+    }
+    const expected = resolveExpectedVersion(fromQuery, c.req.header('X-Expected-Version'));
+    if (!expected.ok) {
+      return { status: 400, body: fail(expected.message, ErrorCodes.VALIDATION_ERROR) };
+    }
+    const deleted = await deleteShoppingListItem(
+      c.env.DB,
+      userId,
+      id,
+      expected.version,
+    );
+    if (deleted.status === 'not_found') {
+      return { status: 404, body: fail('Not found', ErrorCodes.NOT_FOUND) };
+    }
+    if (deleted.status === 'conflict') return conflictResponse(deleted.item);
+    return { status: 200, body: ok(null) };
+  });
 });

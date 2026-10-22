@@ -1,5 +1,9 @@
 import { Hono, type Context } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { ok, fail } from '../lib/api-response';
+import { ErrorCodes } from '../lib/error-codes';
+import { parseJsonBody } from '../lib/validate';
+import { chatResumeBodySchema, chatSendBodySchema } from '../schemas/chat';
 import type { Env } from '../env';
 import type { AuthVariables } from '../middleware/auth';
 import { clientIp, requireAuth } from '../middleware/auth';
@@ -22,13 +26,6 @@ import { resumeAgentTurn, runAgentTurn } from '../agent/agent-loop';
 import { maybeAutoTitleSession } from '../agent/auto-title';
 import { listToolNames } from '../agent/tools/definitions';
 
-type ChatSendBody = {
-  message?: string;
-  sessionId?: string;
-  /** Client local calendar date YYYY-MM-DD for “today” in the agent prompt. */
-  clientLocalDate?: string;
-};
-
 function optionalClientLocalDate(
   value: unknown,
 ): string | undefined {
@@ -36,12 +33,6 @@ function optionalClientLocalDate(
   const trimmed = value.trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : undefined;
 }
-
-type ChatResumeBody = {
-  sessionId?: string;
-  decision?: 'approve' | 'reject';
-  note?: string;
-};
 
 export const chatRoutes = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -146,15 +137,17 @@ chatRoutes.post('/api/chat/stream', async (c) => {
   const rateLimited = await enforceGuestChatIp(c);
   if (rateLimited) return rateLimited;
 
-  const body = await c.req.json<ChatSendBody>();
+  const parsed = await parseJsonBody(c, chatSendBodySchema);
+  if (!parsed.ok) return c.json(fail(parsed.message, parsed.code), 400);
+  const body = parsed.data;
   if (!body.message?.trim()) {
-    return c.json(fail('message is required'), 400);
+    return c.json(fail('message is required', ErrorCodes.VALIDATION_ERROR), 400);
   }
 
   let sessionId = body.sessionId;
   if (sessionId) {
     const session = await getSessionForUser(c.env.DB, userId, sessionId);
-    if (!session) return c.json(fail('Session not found'), 404);
+    if (!session) return c.json(fail('Session not found', ErrorCodes.NOT_FOUND), 404);
   } else {
     const created = await createSession(c.env.DB, userId);
     sessionId = created.id;
@@ -174,15 +167,17 @@ chatRoutes.post('/api/chat/send', async (c) => {
   const rateLimited = await enforceGuestChatIp(c);
   if (rateLimited) return rateLimited;
 
-  const body = await c.req.json<ChatSendBody>();
+  const parsed = await parseJsonBody(c, chatSendBodySchema);
+  if (!parsed.ok) return c.json(fail(parsed.message, parsed.code), 400);
+  const body = parsed.data;
   if (!body.message?.trim()) {
-    return c.json(fail('message is required'), 400);
+    return c.json(fail('message is required', ErrorCodes.VALIDATION_ERROR), 400);
   }
 
   let sessionId = body.sessionId;
   if (sessionId) {
     const session = await getSessionForUser(c.env.DB, userId, sessionId);
-    if (!session) return c.json(fail('Session not found'), 404);
+    if (!session) return c.json(fail('Session not found', ErrorCodes.NOT_FOUND), 404);
   } else {
     const created = await createSession(c.env.DB, userId);
     sessionId = created.id;
@@ -240,30 +235,35 @@ chatRoutes.post('/api/chat/send', async (c) => {
 
 chatRoutes.post('/api/chat/resume', async (c) => {
   const userId = c.get('userId');
-  const body = (await c.req.json<ChatResumeBody>().catch(() => ({}))) as ChatResumeBody;
-  if (!body.sessionId?.trim()) {
-    return c.json(fail('sessionId is required'), 400);
-  }
-  if (body.decision !== 'approve' && body.decision !== 'reject') {
-    return c.json(fail("decision must be 'approve' or 'reject'"), 400);
-  }
+  const parsed = await parseJsonBody(c, chatResumeBodySchema);
+  if (!parsed.ok) return c.json(fail(parsed.message, parsed.code), 400);
+  const body = parsed.data;
 
   const session = await getSessionForUser(c.env.DB, userId, body.sessionId);
-  if (!session) return c.json(fail('Session not found'), 404);
+  if (!session) return c.json(fail('Session not found', ErrorCodes.NOT_FOUND), 404);
 
   const turn = await resumeAgentTurn(c.env, {
     userId,
     sessionId: body.sessionId,
     decision: body.decision,
     note: body.note,
+    interruptId: body.interruptId,
   });
 
   if (turn.kind === 'error') {
-    const status = turn.message.includes('No pending') ? 404 : 500;
-    return c.json(fail(turn.message), status);
+    const status =
+      turn.status ??
+      (turn.code === ErrorCodes.NO_PENDING_ACTION ||
+      turn.message.includes('No pending')
+        ? 404
+        : 500);
+    return c.json(
+      fail(turn.message, turn.code ?? ErrorCodes.ERROR),
+      status as ContentfulStatusCode,
+    );
   }
   if (turn.kind !== 'complete') {
-    return c.json(fail('Unexpected resume state'), 500);
+    return c.json(fail('Unexpected resume state', ErrorCodes.INTERNAL), 500);
   }
   return c.json(ok(turn.response));
 });
