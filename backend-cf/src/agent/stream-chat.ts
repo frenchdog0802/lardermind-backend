@@ -52,6 +52,19 @@ export function streamCookingChat(env: Env, input: StreamChatInput): Response {
         return;
       }
 
+      if (turn.kind === 'interrupt') {
+        await writeEvent(
+          'interrupt',
+          JSON.stringify({
+            type: 'interrupt',
+            message: turn.message,
+            data: turn.data,
+          }),
+        );
+        return;
+      }
+
+      // Title only after a completed turn (no pending HITL) so Recents stay accurate.
       try {
         const titled = await maybeAutoTitleSession({
           env,
@@ -71,18 +84,6 @@ export function streamCookingChat(env: Env, input: StreamChatInput): Response {
         }
       } catch {
         // Title failures must not block the chat turn.
-      }
-
-      if (turn.kind === 'interrupt') {
-        await writeEvent(
-          'interrupt',
-          JSON.stringify({
-            type: 'interrupt',
-            message: turn.message,
-            data: turn.data,
-          }),
-        );
-        return;
       }
 
       for (const token of chunkText(turn.response.message)) {

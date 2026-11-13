@@ -4,7 +4,7 @@ export const signupBodySchema = z.object({
   first_name: z.string().trim().min(1).max(100),
   last_name: z.string().trim().min(1).max(100),
   email: z.string().trim().min(1).max(320),
-  password: z.string().min(1).max(256),
+  password: z.string().min(8).max(256),
   guest_token: z.string().optional(),
 });
 

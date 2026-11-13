@@ -201,6 +201,16 @@ chatRoutes.post('/api/chat/send', async (c) => {
     return c.json(fail(turn.message), 500);
   }
 
+  if (turn.kind === 'interrupt') {
+    return c.json(
+      ok({
+        type: 'interrupt',
+        message: turn.message,
+        data: turn.data,
+      }),
+    );
+  }
+
   let autoTitle: string | undefined;
   try {
     const titled = await maybeAutoTitleSession({
@@ -215,16 +225,6 @@ chatRoutes.post('/api/chat/send', async (c) => {
     // Title failures must not block the chat turn.
   }
 
-  if (turn.kind === 'interrupt') {
-    return c.json(
-      ok({
-        type: 'interrupt',
-        message: turn.message,
-        data: turn.data,
-        ...(autoTitle ? { title: autoTitle } : {}),
-      }),
-    );
-  }
   return c.json(
     ok({
       ...turn.response,
@@ -265,5 +265,28 @@ chatRoutes.post('/api/chat/resume', async (c) => {
   if (turn.kind !== 'complete') {
     return c.json(fail('Unexpected resume state', ErrorCodes.INTERNAL), 500);
   }
-  return c.json(ok(turn.response));
+
+  let autoTitle: string | undefined;
+  try {
+    const titled = await maybeAutoTitleSession({
+      env: c.env,
+      db: c.env.DB,
+      userId,
+      sessionId: body.sessionId,
+      userMessage:
+        body.decision === 'approve'
+          ? 'Approved kitchen updates'
+          : 'Rejected kitchen updates',
+    });
+    if (titled) autoTitle = titled.title;
+  } catch {
+    // Title failures must not block resume.
+  }
+
+  return c.json(
+    ok({
+      ...turn.response,
+      ...(autoTitle ? { title: autoTitle } : {}),
+    }),
+  );
 });
