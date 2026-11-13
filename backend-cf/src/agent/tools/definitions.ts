@@ -200,7 +200,8 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     type: 'function',
     function: {
       name: 'createRecipe',
-      description: 'Create a new recipe (requires approval).',
+      description:
+        'Create a NEW recipe (requires approval). If a recipe with the same meal_name already exists, use updateRecipe instead unless the user explicitly wants another copy.',
       parameters: {
         type: 'object',
         properties: {
@@ -218,14 +219,57 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
               properties: {
                 name: { type: 'string' },
                 quantity: { type: 'number' },
-                unit: { type: 'string' },
+                unit: {
+                  type: 'string',
+                  description:
+                    'Exact unit from the recipe text (cup, tbsp, g, …). Do not convert cups/tbsp to ml.',
+                },
               },
-              required: ['name'],
+              required: ['name', 'unit'],
             },
           },
           folder_id: { type: 'string' },
         },
         required: ['meal_name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'updateRecipe',
+      description:
+        'Update an existing recipe in place (requires approval). Prefer over createRecipe when the user asks to edit/update a recipe. Pass recipe_id from listMyRecipes or getRecipeDetails.',
+      parameters: {
+        type: 'object',
+        properties: {
+          recipe_id: { type: 'string' },
+          meal_name: { type: 'string' },
+          instructions: {
+            oneOf: [
+              { type: 'string' },
+              { type: 'array', items: { type: 'string' } },
+            ],
+          },
+          ingredients: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                quantity: { type: 'number' },
+                unit: {
+                  type: 'string',
+                  description:
+                    'Exact unit from the recipe text. Do not convert cups/tbsp to ml.',
+                },
+              },
+              required: ['name', 'unit'],
+            },
+          },
+          folder_id: { type: 'string' },
+        },
+        required: ['recipe_id'],
       },
     },
   },

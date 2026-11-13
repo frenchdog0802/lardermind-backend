@@ -14,6 +14,7 @@ import {
   listRecipeIngredientRows,
   listRecipes,
   toRecipeDto,
+  updateRecipe,
   type RecipeIngredientInput,
 } from '../../db/recipe';
 import {
@@ -386,7 +387,8 @@ async function executeRemovePantryItems(
   };
 }
 
-function ingredientInputsFromArgs(
+/** Preserve caller units as-is. Do not invent pcs when quantity is set without a unit. */
+export function ingredientInputsFromArgs(
   args: Record<string, unknown>,
 ): RecipeIngredientInput[] {
   const raw = Array.isArray(args.ingredients) ? args.ingredients : [];
@@ -396,10 +398,13 @@ function ingredientInputsFromArgs(
     const obj = item as Record<string, unknown>;
     const name = asString(obj.name).trim();
     if (!name) continue;
+    const quantity = asNumber(obj.quantity, 0);
+    const unitRaw = typeof obj.unit === 'string' ? obj.unit.trim() : '';
+    const unit = unitRaw || (quantity === 0 ? 'pcs' : '');
     out.push({
       name,
-      quantity: asNumber(obj.quantity, 0),
-      unit: asString(obj.unit, 'pcs').trim() || 'pcs',
+      quantity,
+      unit,
       ...(typeof obj.ingredient_id === 'string'
         ? { ingredient_id: obj.ingredient_id }
         : {}),
@@ -782,6 +787,20 @@ export async function executeTool(
       if (!mealName) {
         return { content: JSON.stringify({ error: 'meal_name is required' }) };
       }
+      const existing = await listRecipes(db, userId, mealName);
+      const exact = existing.find(
+        (r) => r.meal_name.trim().toLowerCase() === mealName.toLowerCase(),
+      );
+      if (exact) {
+        return {
+          content: JSON.stringify({
+            error:
+              'A recipe with this meal_name already exists. Call updateRecipe with recipe_id to edit it, or ask the user to confirm creating another copy.',
+            existingRecipeId: exact.id,
+            existingMealName: exact.meal_name,
+          }),
+        };
+      }
       const recipe = await createRecipe(db, userId, {
         meal_name: mealName,
         folder_id: asString(args.folder_id).trim() || undefined,
@@ -791,6 +810,37 @@ export async function executeTool(
         ingredients: ingredientInputsFromArgs(args),
       });
       const cardType = TOOL_CARD_TYPES.createRecipe!;
+      return {
+        content: JSON.stringify({ recipe }),
+        cardType,
+        cardData: recipeCreatedCardData(recipe),
+      };
+    }
+    case 'updateRecipe': {
+      const recipeId = asString(args.recipe_id).trim();
+      if (!recipeId) {
+        return { content: JSON.stringify({ error: 'recipe_id is required' }) };
+      }
+      const patch: Parameters<typeof updateRecipe>[3] = {};
+      if (typeof args.meal_name === 'string' && args.meal_name.trim()) {
+        patch.meal_name = args.meal_name.trim();
+      }
+      if (args.folder_id !== undefined) {
+        patch.folder_id = asString(args.folder_id).trim() || null;
+      }
+      if (args.instructions !== undefined) {
+        patch.instructions = Array.isArray(args.instructions)
+          ? (args.instructions as unknown[]).map((s) => String(s))
+          : asString(args.instructions);
+      }
+      if (args.ingredients !== undefined) {
+        patch.ingredients = ingredientInputsFromArgs(args);
+      }
+      const recipe = await updateRecipe(db, userId, recipeId, patch);
+      if (!recipe) {
+        return { content: JSON.stringify({ error: 'Recipe not found' }) };
+      }
+      const cardType = TOOL_CARD_TYPES.updateRecipe!;
       return {
         content: JSON.stringify({ recipe }),
         cardType,

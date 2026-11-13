@@ -90,6 +90,15 @@ describe('buildCookingAssistantSystemPrompt', () => {
     expect(prompt).toMatch(/paste a short fridge/i);
   });
 
+  it('requires updateRecipe for edits and preserves recipe units', () => {
+    const prompt = buildCookingAssistantSystemPrompt({
+      todayLocalDate: '2026-10-11',
+    });
+    expect(prompt).toMatch(/updateRecipe/);
+    expect(prompt).toMatch(/cups\s*↔\s*ml|never convert cups/i);
+    expect(prompt).toMatch(/unit strings exactly/i);
+  });
+
   it('documents value-first empty reply policy vs stock-dependent paste', () => {
     const prompt = buildCookingAssistantSystemPrompt({
       todayLocalDate: '2026-10-11',

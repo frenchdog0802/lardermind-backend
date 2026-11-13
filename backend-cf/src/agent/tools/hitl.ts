@@ -6,6 +6,7 @@ export const MUTATING_TOOLS = new Set([
   'removePantryItems',
   'addItemsToShoppingList',
   'createRecipe',
+  'updateRecipe',
   'addRecipeToMenu',
   'planMeals',
   'updatePreferences',
@@ -69,6 +70,8 @@ export function argsSummary(
     }
     case 'createRecipe':
       return String(args.meal_name ?? 'recipe');
+    case 'updateRecipe':
+      return `update ${String(args.meal_name ?? args.recipe_id ?? 'recipe')}`;
     case 'addRecipeToMenu':
       return `${String(args.meal_name ?? args.recipe_id ?? 'meal')} on ${String(args.serving_date ?? '?')}`;
     case 'planMeals': {
