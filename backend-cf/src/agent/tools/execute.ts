@@ -826,7 +826,8 @@ export async function executeTool(
         patch.meal_name = args.meal_name.trim();
       }
       if (args.folder_id !== undefined) {
-        patch.folder_id = asString(args.folder_id).trim() || null;
+        const folder = asString(args.folder_id).trim();
+        patch.folder_id = folder || undefined;
       }
       if (args.instructions !== undefined) {
         patch.instructions = Array.isArray(args.instructions)

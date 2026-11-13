@@ -2,7 +2,7 @@
 
 Pasteable summary for [lardermind-backend#2](https://github.com/frenchdog0802/lardermind-backend/issues/2):
 
-## Shipped
+## Shipped (on origin)
 
 **Product calls**
 - Guest demo copy = **5 AI msgs/day** (enforcement unchanged).
@@ -18,12 +18,12 @@ Pasteable summary for [lardermind-backend#2](https://github.com/frenchdog0802/la
 - Quota hit → signup / Start 7-day Pro trial CTA (guest + in-app).
 - Plan from ingredients in the prompt; no invented quantities; merge pantries (prompt rules).
 - Guest demo shows “Starting demo…” while minting.
+- Web API base URL inlined at build (`55dbb44`+).
 
-## Deferred (after Stripe live)
+**Should-fix (bounded)**
+- Recipe quality prompt; skip subscription status without JWT; GIS redirect (no One Tap prefill); signup password rules (8+); see `issue-2-and-3-should-fix-closeout.md`.
 
-- Usage counter accuracy / recipes saved 0
-- Setup guide blocking calendar Add
-- Should-fix items (richer recipes, 401 noise, password rules, etc.)
-- Shopping “generate list” button, image-upload discoverability, recipe import UI
+## Related
 
-`gh` was not available in this environment to post the comment automatically.
+- Usage / recipes saved 0 → fixed via claim merge + `countRecipes` (issue #3.4).
+- Setup guide blocking UI → unmounted + localStorage clear (issue #3.11–12).
