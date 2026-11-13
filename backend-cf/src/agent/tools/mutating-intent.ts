@@ -102,3 +102,27 @@ export const MUTATION_TOOL_NUDGE =
 
 export const MUTATION_NO_TOOL_FALLBACK =
   'I could not update your data because no tool was started. Nothing was saved. Please try again, or make the change in Kitchen Inventory / the relevant screen.';
+
+/** Model claimed a write succeeded (Chinese/English) without tools — prefer hard fallback. */
+export function looksLikeFalseMutationSuccess(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (
+    /(已加入|已新增|已更新|已刪除|已移除|已寫入|已保存|已存入).{0,16}(庫存|冰箱|購物|食譜|菜單|行事曆|日曆)/u.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(added|updated|removed|deleted|saved|logged)\b[\s\S]{0,48}\b(pantry|inventory|shopping(?:\s+list)?|recipe|meal\s*plan)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (/已加入庫存|已加入冰箱|✅/.test(t) && /(庫存|冰箱|購物|食譜)/u.test(t)) {
+    return true;
+  }
+  return false;
+}

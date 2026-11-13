@@ -46,6 +46,7 @@ import { validateToolArgs } from './tools/validate-args';
 import { recheckMutatingTargets } from './tools/recheck-targets';
 import { ErrorCodes } from '../lib/error-codes';
 import {
+  looksLikeFalseMutationSuccess,
   looksLikeMutatingUserRequest,
   MUTATION_NO_TOOL_FALLBACK,
   MUTATION_TOOL_NUDGE,
@@ -278,14 +279,18 @@ async function runToolLoop(
           toolChoice = 'required';
           continue;
         }
-        // Prefer the model's drafted text over a hard failure when tools never started
-        // (e.g. planning replies that looked like mutations). Hard fallback only if empty.
+        // Prefer drafted text for false-positive mutation intent (planning replies).
+        // Hard-fallback when empty or when the model falsely claims a write succeeded.
         const drafted = result.content.trim();
+        const message =
+          !drafted || looksLikeFalseMutationSuccess(drafted)
+            ? MUTATION_NO_TOOL_FALLBACK
+            : drafted;
         return {
           kind: 'complete',
           response: {
             type: 'text',
-            message: drafted || MUTATION_NO_TOOL_FALLBACK,
+            message,
             data: {},
           },
         };

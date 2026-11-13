@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { looksLikeMutatingUserRequest } from './mutating-intent';
+import {
+  looksLikeFalseMutationSuccess,
+  looksLikeMutatingUserRequest,
+} from './mutating-intent';
 
 describe('looksLikeMutatingUserRequest', () => {
   it('detects Chinese add-to-inventory requests', () => {
@@ -58,5 +61,23 @@ describe('looksLikeMutatingUserRequest', () => {
         'make a grocery list of missing items and add them to my shopping list',
       ),
     ).toBe(true);
+  });
+});
+
+describe('looksLikeFalseMutationSuccess', () => {
+  it('detects Chinese false pantry write claims', () => {
+    expect(
+      looksLikeFalseMutationSuccess(
+        '好的，我幫你記下：豬肉 3 份已加入庫存 ✅',
+      ),
+    ).toBe(true);
+  });
+
+  it('allows planning text without write claims', () => {
+    expect(
+      looksLikeFalseMutationSuccess(
+        'Here is a draft grocery list of missing items for the week.',
+      ),
+    ).toBe(false);
   });
 });
