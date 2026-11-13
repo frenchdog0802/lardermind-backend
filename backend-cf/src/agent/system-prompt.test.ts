@@ -113,4 +113,24 @@ describe('buildCookingAssistantSystemPrompt', () => {
     expect(prompt).toMatch(/define_unit/);
     expect(prompt).toMatch(/suggestMealsFromPantry.*again|call \*\*suggestMealsFromPantry\*\* again/i);
   });
+
+  it('requires reply and tool name/unit language to match the user message', () => {
+    const prompt = buildCookingAssistantSystemPrompt({
+      todayLocalDate: '2026-10-11',
+    });
+    expect(prompt).toMatch(/Reply in the same language as the user's latest message/i);
+    expect(prompt).toMatch(/Tool argument name and unit strings MUST use that same language/i);
+    expect(prompt).toMatch(/Do not switch into Chinese examples/i);
+  });
+
+  it('plans from ingredients in the user message without inventing quantities or conflicting pantries', () => {
+    const prompt = buildCookingAssistantSystemPrompt({
+      todayLocalDate: '2026-10-11',
+    });
+    expect(prompt).toMatch(/ephemeral pantry/i);
+    expect(prompt).toMatch(/Answer with the plan/i);
+    expect(prompt).toMatch(/Never invent quantities/i);
+    expect(prompt).toMatch(/two conflicting pantries/i);
+    expect(prompt).toMatch(/merge/i);
+  });
 });

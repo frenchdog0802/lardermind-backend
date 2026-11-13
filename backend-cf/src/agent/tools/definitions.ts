@@ -72,7 +72,8 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     type: 'function',
     function: {
       name: 'addPantryItems',
-      description: 'Add or merge-add items into the pantry (requires approval).',
+      description:
+        'Add or merge-add items into the pantry (requires approval). Use name/unit in the same language as the user message. Do not invent quantities the user did not state — ask, or use 1 and say it was assumed.',
       parameters: {
         type: 'object',
         properties: {
@@ -81,9 +82,15 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
             items: {
               type: 'object',
               properties: {
-                name: { type: 'string' },
+                name: {
+                  type: 'string',
+                  description: 'Item name in the user message language.',
+                },
                 quantity: { type: 'number' },
-                unit: { type: 'string' },
+                unit: {
+                  type: 'string',
+                  description: 'Unit in the user message language (e.g. pack, g).',
+                },
               },
               required: ['name', 'quantity'],
             },
@@ -161,7 +168,8 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     type: 'function',
     function: {
       name: 'addItemsToShoppingList',
-      description: 'Add items to the shopping list (requires approval).',
+      description:
+        'Add items to the shopping list (requires approval). Use name/unit in the same language as the user message.',
       parameters: {
         type: 'object',
         properties: {
@@ -170,9 +178,15 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
             items: {
               type: 'object',
               properties: {
-                name: { type: 'string' },
+                name: {
+                  type: 'string',
+                  description: 'Item name in the user message language.',
+                },
                 quantity: { type: 'number' },
-                unit: { type: 'string' },
+                unit: {
+                  type: 'string',
+                  description: 'Unit in the user message language (e.g. pack, g).',
+                },
               },
               required: ['name', 'quantity'],
             },

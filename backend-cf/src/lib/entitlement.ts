@@ -40,7 +40,7 @@ export const GUEST_MINT_PER_IP_PER_DAY = 5;
 export const GUEST_CHAT_PER_IP_PER_DAY = 20;
 
 export const PRO_TIER = {
-  aiMessagesPerDay: 200,
+  aiMessagesPerDay: 150,
   recipeImportsPerMonth: 50,
   maxRecipes: -1,
   imageUploadsPerMonth: -1,

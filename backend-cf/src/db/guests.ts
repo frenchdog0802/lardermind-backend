@@ -4,6 +4,7 @@ import {
   GUEST_MINT_PER_IP_PER_DAY,
   GUEST_TTL_SECONDS,
 } from '../lib/entitlement';
+import { mergeGuestUsageIntoRealUser } from './quotas';
 import type { UserRow } from './users';
 
 export async function hashIp(ip: string): Promise<string> {
@@ -183,11 +184,9 @@ export async function claimGuestKitchen(
     );
   }
 
-  stmts.push(
-    db.prepare('DELETE FROM usage_quotas WHERE user_id = ?').bind(guestUserId),
-  );
   stmts.push(db.prepare('DELETE FROM users WHERE id = ?').bind(guestUserId));
 
+  await mergeGuestUsageIntoRealUser(db, guestUserId, realUserId);
   await db.batch(stmts);
 }
 

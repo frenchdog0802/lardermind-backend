@@ -1,10 +1,33 @@
 /**
  * Heuristic: user asks to change pantry / shopping / recipes / meal plans / preferences.
  * Used to block text-only false "saved" replies when tools were not called.
+ *
+ * Draft / planning asks (grocery list of missing items, what should I buy) must NOT match.
  */
 export function looksLikeMutatingUserRequest(text: string): boolean {
   const t = text.trim();
   if (!t) return false;
+
+  // Planning / draft list asks — not a write until the user explicitly saves.
+  if (
+    /\b(make|generate|draft|suggest|show|give)\b[\s\S]{0,40}\b(grocery|shopping)\s+list\b/i.test(
+      t,
+    ) ||
+    /\b(grocery|shopping)\s+list\b[\s\S]{0,40}\b(missing|shortages?|what\s+to\s+buy)\b/i.test(
+      t,
+    ) ||
+    /\bwhat\s+should\s+i\s+buy\b/i.test(t) ||
+    /\b(幫我)?(列|做|產生|產生一下|給我)(一)?(個)?(購物|採買)清單/u.test(t) ||
+    /缺什麼|還缺什麼|要買什麼/u.test(t)
+  ) {
+    // Still mutation if they also explicitly ask to persist into their list/pantry.
+    const explicitPersist =
+      /\b(add|save|write|log)\b[\s\S]{0,48}\b(to\s+(my\s+)?(shopping(\s+list)?|pantry|inventory))\b/i.test(
+        t,
+      ) ||
+      /(加到|加入|寫進|存到).{0,12}(購物|庫存|冰箱)/u.test(t);
+    if (!explicitPersist) return false;
+  }
 
   // ZH: write verb near pantry/shopping/recipe/menu domain
   if (
@@ -40,18 +63,25 @@ export function looksLikeMutatingUserRequest(text: string): boolean {
     return true;
   }
 
-  // EN: write verb near domain (either order)
+  // EN: explicit persist verbs near stored domains (not bare "create a shopping list")
   if (
-    /\b(add|remove|delete|update|create|save|log|reduce|subtract)\b[\s\S]{0,48}\b(pantry|inventory|shopping(?:\s+list)?|recipe|meal\s*plan|preferences?)\b/i.test(
+    /\b(add|remove|delete|update|save|log|reduce|subtract)\b[\s\S]{0,48}\b(pantry|inventory|shopping(?:\s+list)?|recipe|meal\s*plan|preferences?)\b/i.test(
       t,
     )
   ) {
     return true;
   }
   if (
-    /\b(pantry|inventory|shopping(?:\s+list)?|recipe|meal\s*plan|preferences?)\b[\s\S]{0,48}\b(add|remove|delete|update|create|save|log|reduce|subtract)\b/i.test(
+    /\b(pantry|inventory|shopping(?:\s+list)?|recipe|meal\s*plan|preferences?)\b[\s\S]{0,48}\b(add|remove|delete|update|save|log|reduce|subtract)\b/i.test(
       t,
     )
+  ) {
+    return true;
+  }
+  // "create recipe" / "create meal plan" are writes; "create a shopping list" alone is draft (excluded above)
+  if (
+    /\bcreate\b[\s\S]{0,48}\b(recipe|meal\s*plan)\b/i.test(t) ||
+    /\b(recipe|meal\s*plan)\b[\s\S]{0,48}\bcreate\b/i.test(t)
   ) {
     return true;
   }

@@ -101,7 +101,7 @@ export async function checkAndIncrementImageUpload(
 }
 
 /**
- * Increment AI message counter. Free: 20 / UTC day. Pro: 200 / UTC day.
+ * Increment AI message counter. Free: 20 / UTC day. Pro: 150 / UTC day. Guest: 5 / UTC day.
  * Admin: unlimited (still increments for usage stats).
  */
 export async function checkAndIncrementAiMessage(
@@ -208,4 +208,133 @@ export async function getImageUsageForStatus(
     return { used: 0, periodStart };
   }
   return { used: row.image_uploads ?? 0, periodStart: row.image_period_start };
+}
+
+type FullQuotaRow = {
+  id: string;
+  user_id: string;
+  ai_message_sent: number;
+  ai_period_start: number | null;
+  image_uploads: number | null;
+  image_period_start: number | null;
+};
+
+function currentPeriodCount(
+  sent: number | null | undefined,
+  storedPeriod: number | null | undefined,
+  periodStart: number,
+): number {
+  if (storedPeriod == null || storedPeriod < periodStart) return 0;
+  return sent ?? 0;
+}
+
+/**
+ * Fold guest usage into the real user's quota row, then delete the guest row.
+ * AI = UTC day; images = UTC month. Same-period counts are summed.
+ */
+export async function mergeGuestUsageIntoRealUser(
+  db: D1Database,
+  guestUserId: string,
+  realUserId: string,
+): Promise<void> {
+  const now = nowUnixSeconds();
+  const dayStart = startOfUtcDay(now);
+  const monthStart = startOfUtcMonth(now);
+
+  const guest = await db
+    .prepare(
+      `SELECT id, user_id, ai_message_sent, ai_period_start, image_uploads, image_period_start
+       FROM usage_quotas WHERE user_id = ? LIMIT 1`,
+    )
+    .bind(guestUserId)
+    .first<FullQuotaRow>();
+
+  const real = await db
+    .prepare(
+      `SELECT id, user_id, ai_message_sent, ai_period_start, image_uploads, image_period_start
+       FROM usage_quotas WHERE user_id = ? LIMIT 1`,
+    )
+    .bind(realUserId)
+    .first<FullQuotaRow>();
+
+  const guestAi = guest
+    ? currentPeriodCount(guest.ai_message_sent, guest.ai_period_start, dayStart)
+    : 0;
+  const realAi = real
+    ? currentPeriodCount(real.ai_message_sent, real.ai_period_start, dayStart)
+    : 0;
+  const guestImages = guest
+    ? currentPeriodCount(guest.image_uploads, guest.image_period_start, monthStart)
+    : 0;
+  const realImages = real
+    ? currentPeriodCount(real.image_uploads, real.image_period_start, monthStart)
+    : 0;
+
+  const mergedAi = guestAi + realAi;
+  const mergedImages = guestImages + realImages;
+
+  if (real) {
+    await db
+      .prepare(
+        `UPDATE usage_quotas
+         SET ai_message_sent = ?,
+             ai_period_start = ?,
+             image_uploads = ?,
+             image_period_start = ?,
+             updated_at = ?
+         WHERE user_id = ?`,
+      )
+      .bind(mergedAi, dayStart, mergedImages, monthStart, now, realUserId)
+      .run();
+    if (guest) {
+      await db
+        .prepare(`DELETE FROM usage_quotas WHERE user_id = ?`)
+        .bind(guestUserId)
+        .run();
+    }
+    return;
+  }
+
+  if (guest) {
+    await db
+      .prepare(
+        `UPDATE usage_quotas
+         SET user_id = ?,
+             ai_message_sent = ?,
+             ai_period_start = ?,
+             image_uploads = ?,
+             image_period_start = ?,
+             updated_at = ?
+         WHERE user_id = ?`,
+      )
+      .bind(
+        realUserId,
+        mergedAi,
+        dayStart,
+        mergedImages,
+        monthStart,
+        now,
+        guestUserId,
+      )
+      .run();
+    return;
+  }
+
+  await db
+    .prepare(
+      `INSERT INTO usage_quotas
+         (id, user_id, ai_message_sent, ai_period_start, image_uploads, image_period_start, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      crypto.randomUUID(),
+      realUserId,
+      mergedAi,
+      dayStart,
+      mergedImages,
+      monthStart,
+      now,
+      now,
+    )
+    .run();
 }

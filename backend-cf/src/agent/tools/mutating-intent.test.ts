@@ -32,4 +32,31 @@ describe('looksLikeMutatingUserRequest', () => {
     expect(looksLikeMutatingUserRequest('我庫存有什麼')).toBe(false);
     expect(looksLikeMutatingUserRequest('suggest a recipe')).toBe(false);
   });
+
+  it('does not flag draft grocery / shopping list planning asks', () => {
+    expect(
+      looksLikeMutatingUserRequest('make a grocery list of missing items'),
+    ).toBe(false);
+    expect(
+      looksLikeMutatingUserRequest('create a shopping list for the week'),
+    ).toBe(false);
+    expect(
+      looksLikeMutatingUserRequest('what should I buy for this week?'),
+    ).toBe(false);
+    expect(
+      looksLikeMutatingUserRequest('Plan a week + grocery list of missing items'),
+    ).toBe(false);
+    expect(looksLikeMutatingUserRequest('幫我列一個購物清單')).toBe(false);
+  });
+
+  it('still flags explicit save-to-shopping writes', () => {
+    expect(
+      looksLikeMutatingUserRequest('add the missing items to my shopping list'),
+    ).toBe(true);
+    expect(
+      looksLikeMutatingUserRequest(
+        'make a grocery list of missing items and add them to my shopping list',
+      ),
+    ).toBe(true);
+  });
 });

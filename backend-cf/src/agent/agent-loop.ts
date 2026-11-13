@@ -278,11 +278,14 @@ async function runToolLoop(
           toolChoice = 'required';
           continue;
         }
+        // Prefer the model's drafted text over a hard failure when tools never started
+        // (e.g. planning replies that looked like mutations). Hard fallback only if empty.
+        const drafted = result.content.trim();
         return {
           kind: 'complete',
           response: {
             type: 'text',
-            message: MUTATION_NO_TOOL_FALLBACK,
+            message: drafted || MUTATION_NO_TOOL_FALLBACK,
             data: {},
           },
         };

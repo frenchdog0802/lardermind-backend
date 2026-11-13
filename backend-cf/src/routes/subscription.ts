@@ -31,6 +31,7 @@ import {
   PRO_AI_MESSAGES_PER_DAY,
   FREE_IMAGE_UPLOAD_LIMIT,
 } from '../db/quotas';
+import { countRecipes } from '../db/recipe';
 
 const PLANS = [
   {
@@ -84,6 +85,7 @@ subscriptionRoutes.get(
   const entitlement = await resolveEntitlement(c.env.DB, userId, user.role);
   const ai = await getAiUsageForStatus(c.env.DB, userId);
   const image = await getImageUsageForStatus(c.env.DB, userId);
+  const recipeCount = await countRecipes(c.env.DB, userId);
 
   const aiLimit = entitlement.isAdmin
     ? -1
@@ -112,9 +114,10 @@ subscriptionRoutes.get(
       usage: {
         aiMessagesUsed: ai.used,
         aiMessagesLimit: aiLimit,
+        // Import counter not tracked in v1 (entitlement not enforced).
         recipeImportsUsed: 0,
         recipeImportsLimit,
-        recipeCount: 0,
+        recipeCount,
         recipeLimit,
         imageUploadsUsed: image.used,
         imageUploadsLimit: imageLimit,
