@@ -113,6 +113,41 @@ const completeOk: CompleteChatFn = async () => ({
   rawAssistantMessage: { role: 'assistant', content: 'Added butter.' },
 });
 
+function recordSql(db: D1Database) {
+  const seen: string[] = [];
+  const inner = db as unknown as { prepare: (sql: string) => unknown };
+  const wrapped = {
+    prepare(sql: string) {
+      seen.push(sql);
+      return inner.prepare(sql);
+    },
+  };
+  return { db: wrapped as unknown as D1Database, seen };
+}
+
+describe('HITL resume does not consume AI message quota', () => {
+  for (const decision of ['approve', 'reject'] as const) {
+    it(`${decision} never reads or writes usage_quotas`, async () => {
+      const { db: base } = hitlDb(pending());
+      const { db, seen } = recordSql(base);
+      const env = { DB: db } as Env;
+      const execute: ExecuteToolFn = async () => ({
+        content: JSON.stringify({ ok: true }),
+        cardType: 'pantry_updated',
+        cardData: {},
+      });
+      const result = await resumeAgentTurn(
+        env,
+        { userId: 'u1', sessionId: 's1', decision, interruptId: 'int-1' },
+        { completeChat: completeOk, executeTool: execute },
+      );
+      expect(result.kind).toBe('complete');
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.filter((sql) => /usage_quotas/i.test(sql))).toEqual([]);
+    });
+  }
+});
+
 describe('HITL resume single execution', () => {
   it('runs a double approval once and replays the outcome', async () => {
     const { db, session } = hitlDb(pending());
