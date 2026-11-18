@@ -23,6 +23,16 @@ export const claimGuestBodySchema = z.object({
   guest_token: z.string().trim().min(1),
 });
 
+export const passwordResetRequestBodySchema = z.object({
+  email: z.string().trim().min(1).max(320),
+});
+
+export const passwordResetConfirmBodySchema = z.object({
+  token: z.string().trim().min(1).max(256),
+  // Same rule as signup.
+  password: signupBodySchema.shape.password,
+});
+
 export type SignupBody = z.infer<typeof signupBodySchema>;
 export type SigninBody = z.infer<typeof signinBodySchema>;
 export type GoogleLoginBody = z.infer<typeof googleLoginBodySchema>;
