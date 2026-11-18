@@ -47,3 +47,15 @@ export function getStripe(env: Env): Stripe {
 export function frontendUrl(env: Env): string {
   return env.FRONTEND_URL.replace(/\/$/, '');
 }
+
+/**
+ * Checkout return URLs. The SPA reads `?subscription=success|cancelled` on `/`,
+ * shows a notice on the Plan screen and refreshes subscription status.
+ */
+export function checkoutReturnUrls(env: Env): { successUrl: string; cancelUrl: string } {
+  const base = frontendUrl(env);
+  return {
+    successUrl: `${base}/?subscription=success`,
+    cancelUrl: `${base}/?subscription=cancelled`,
+  };
+}

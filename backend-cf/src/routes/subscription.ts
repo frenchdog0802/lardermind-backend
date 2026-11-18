@@ -8,6 +8,7 @@ import { findUserById } from '../db/users';
 import { FREE_TIER, PRO_TIER } from '../lib/entitlement';
 import {
   billingPeriodForPriceId,
+  checkoutReturnUrls,
   frontendUrl,
   getStripe,
   priceIdFor,
@@ -170,7 +171,7 @@ subscriptionRoutes.post(
     const stripe = getStripe(c.env);
     const customerId = await ensureStripeCustomer(c.env, stripe, userId, user.email);
     const price = priceIdFor(c.env, billingPeriod);
-    const base = frontendUrl(c.env);
+    const { successUrl, cancelUrl } = checkoutReturnUrls(c.env);
     const hadSub = await hasHadStripeSubscription(c.env.DB, userId);
 
     const session = await stripe.checkout.sessions.create({
@@ -178,8 +179,8 @@ subscriptionRoutes.post(
       customer: customerId,
       client_reference_id: userId,
       line_items: [{ price, quantity: 1 }],
-      success_url: `${base}/?subscription=success`,
-      cancel_url: `${base}/?subscription=cancelled`,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
       metadata: { userId },
       subscription_data: {
         metadata: { userId },
