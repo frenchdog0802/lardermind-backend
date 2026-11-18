@@ -284,16 +284,6 @@ export async function insertMessage(
   ]);
 }
 
-export async function incrementAiUsage(db: D1Database, userId: string): Promise<void> {
-  const now = nowUnixSeconds();
-  await db
-    .prepare(
-      `UPDATE usage_quotas SET ai_message_sent = ai_message_sent + 1, updated_at = ?, ai_period_start = COALESCE(ai_period_start, ?) WHERE user_id = ?`,
-    )
-    .bind(now, now, userId)
-    .run();
-}
-
 export async function clearHistory(
   db: D1Database,
   userId: string,

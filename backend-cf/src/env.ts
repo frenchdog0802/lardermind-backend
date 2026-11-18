@@ -38,4 +38,8 @@ export type Env = {
   STRIPE_PRICE_MONTHLY?: string;
   /** Stripe Price ID for Pro yearly. */
   STRIPE_PRICE_YEARLY?: string;
+  /** Resend API key (secret). Mail no-ops (logged) when unset. */
+  RESEND_API_KEY?: string;
+  /** Verified sender, e.g. `LarderMind <no-reply@lardermind.com>`. Mail no-ops when unset. */
+  MAIL_FROM?: string;
 };

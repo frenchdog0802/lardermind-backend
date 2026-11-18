@@ -19,6 +19,7 @@ export const ErrorCodes = {
   GUEST_EXPIRED: 'guest_expired',
   SIGNUP_REQUIRED: 'signup_required',
   GUEST_CHAT_RATE_LIMITED: 'guest_chat_rate_limited',
+  RESET_TOKEN_INVALID: 'reset_token_invalid',
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];

@@ -9,6 +9,9 @@ export const AUTH_LIMITS = {
   signinEmail: 20,
   signupIp: 10,
   googleIp: 30,
+  resetRequestIp: 10,
+  resetRequestEmail: 3,
+  resetConfirmIp: 20,
 } as const;
 
 export class AuthRateLimitError extends Error {
@@ -35,6 +38,18 @@ export function signupIpSubject(ip: string): string {
 
 export function googleIpSubject(ip: string): string {
   return `google:ip:${ip.trim() || 'unknown'}`;
+}
+
+export function resetRequestIpSubject(ip: string): string {
+  return `reset-request:ip:${ip.trim() || 'unknown'}`;
+}
+
+export function resetRequestEmailSubject(email: string): string {
+  return `reset-request:email:${email.trim().toLowerCase()}`;
+}
+
+export function resetConfirmIpSubject(ip: string): string {
+  return `reset-confirm:ip:${ip.trim() || 'unknown'}`;
 }
 
 /**
