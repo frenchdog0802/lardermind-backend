@@ -31,6 +31,12 @@ export function streamCookingChat(env: Env, input: StreamChatInput): Response {
 
   void (async () => {
     try {
+      // Tell the client which session this turn belongs to so follow-up messages
+      // reuse it (otherwise a client without a session id spawns a new one per turn).
+      await writeEvent(
+        'session',
+        JSON.stringify({ sessionId: input.sessionId }),
+      );
       await writeEvent(
         'status',
         JSON.stringify({ message: 'Thinking about your meal…' }),

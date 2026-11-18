@@ -126,3 +126,24 @@ export function looksLikeFalseMutationSuccess(text: string): boolean {
   }
   return false;
 }
+
+/** Short "yes / ok / save it" style replies that carry no domain words of their own. */
+const AFFIRMATIVE_RE =
+  /^\s*(yes|yeah|yep|yup|sure|ok(?:ay)?|please|go ahead|do it|save(?: it)?|add(?: it| them)?|confirm|approve|sounds good|好|好的|好啊|可以|要|是|確認|請|沒問題|儲存|保存|加入|新增)[\s!.,。！，]*(please|thanks|thank you|謝謝|吧|喔|哦)?[\s!.,。！，]*$/iu;
+
+/** Assistant text that offers to save / add something to the user's data. */
+const WRITE_OFFER_RE =
+  /\b(save|add|store|log|schedule|put)\b[\s\S]{0,80}\b(pantry|inventory|shopping|recipes?|meal\s*plan|calendar|list)\b|\b(would you like|want me to|shall i|should i|do you want)\b[\s\S]{0,80}\b(save|add|schedule)\b|(要不要|需要我|想要我|是否).{0,20}(儲存|保存|加入|新增|加到|存到)/iu;
+
+/**
+ * True when the user replied with a bare confirmation ("yes", "save it") to an
+ * assistant message that offered to write data. Such replies must go through a tool
+ * (and therefore the Approve card) instead of a text-only answer.
+ */
+export function looksLikeConfirmingWriteOffer(
+  text: string,
+  previousAssistantText?: string | null,
+): boolean {
+  if (!previousAssistantText) return false;
+  return AFFIRMATIVE_RE.test(text) && WRITE_OFFER_RE.test(previousAssistantText);
+}
