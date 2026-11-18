@@ -40,7 +40,7 @@
 - [ ] Cancel Checkout → not Pro
 - [ ] Portal + cancel-at-period-end behavior
 - [ ] `past_due` keeps Pro; terminal drops Pro
-- [x] Image + AI caps; Pro/admin unlimited (AI 200/day) — unit covered
+- [x] Image + AI caps; Pro/admin unlimited (AI 150/day) — unit covered
 - [x] `stripeCheckoutEnabled` false when misconfigured
 - [x] Legal updated
 - [x] Mobile IAP still out of scope / untouched

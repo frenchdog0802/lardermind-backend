@@ -170,7 +170,7 @@ Feature: [docs/features/frontend-cf-pages.md](../docs/features/frontend-cf-pages
 - Customer Portal: enable cancel, payment method update, and both prices for plan switching.
 - Local CLI: `stripe listen --forward-to localhost:8787/api/subscription/webhook` then put the printed `whsec_…` in `.dev.vars`.
 - Entitlement: D1 `subscriptions`; `isPro` for `active` / `trialing` / `past_due`.
-- Free AI: 20 messages / UTC day; Pro: 200. Free images: 10 / UTC month; Pro unlimited.
+- Free AI: 20 messages / UTC day; Pro: 150 (`PRO_TIER.aiMessagesPerDay` in `src/lib/entitlement.ts`). HITL approve/reject (`/api/chat/resume`) never counts. Free images: 10 / UTC month; Pro unlimited.
 
 ### Google login notes
 

@@ -198,7 +198,8 @@ describe('checkAndIncrementAiMessage', () => {
     );
   });
 
-  it('allows 200 for pro', async () => {
+  it('allows PRO_AI_MESSAGES_PER_DAY (150) for pro', async () => {
+    expect(PRO_AI_MESSAGES_PER_DAY).toBe(150);
     const { db, state } = createFakeDb({
       ai_message_sent: PRO_AI_MESSAGES_PER_DAY - 1,
       ai_period_start: startOfUtcDay(Math.floor(Date.now() / 1000)),
