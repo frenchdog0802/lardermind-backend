@@ -47,6 +47,7 @@ import { recheckMutatingTargets } from './tools/recheck-targets';
 import { ErrorCodes } from '../lib/error-codes';
 import {
   looksLikeFalseMutationSuccess,
+  looksLikeConfirmingWriteOffer,
   looksLikeMutatingUserRequest,
   MUTATION_NO_TOOL_FALLBACK,
   MUTATION_TOOL_NUDGE,
@@ -239,13 +240,18 @@ async function runToolLoop(
   complete: CompleteChatFn,
   execute: ExecuteToolFn,
   originalUserMessage: string,
-  options: { isGuest?: boolean } = {},
+  options: { isGuest?: boolean; previousAssistantText?: string | null } = {},
 ): Promise<AgentTurnResult> {
   const cardEvents: ToolCardEvent[] = [];
   const maxRounds = recursionLimit(env);
   let mutationNudgeUsed = false;
   let toolChoice: 'auto' | 'required' = 'auto';
-  const mutatingIntent = looksLikeMutatingUserRequest(originalUserMessage);
+  const mutatingIntent =
+    looksLikeMutatingUserRequest(originalUserMessage) ||
+    looksLikeConfirmingWriteOffer(
+      originalUserMessage,
+      options.previousAssistantText,
+    );
   const tools = options.isGuest
     ? cookingToolsForGuest(GUEST_TOOL_ALLOWLIST)
     : COOKING_TOOLS;
@@ -480,7 +486,12 @@ export async function runAgentTurn(
       complete,
       execute,
       input.message,
-      { isGuest },
+      {
+        isGuest,
+        previousAssistantText: [...history]
+          .reverse()
+          .find((m) => m.role === 'assistant')?.content,
+      },
     );
 
     if (turn.kind === 'complete') {

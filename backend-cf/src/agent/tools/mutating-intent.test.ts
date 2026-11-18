@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  looksLikeConfirmingWriteOffer,
   looksLikeFalseMutationSuccess,
   looksLikeMutatingUserRequest,
 } from './mutating-intent';
@@ -79,5 +80,27 @@ describe('looksLikeFalseMutationSuccess', () => {
         'Here is a draft grocery list of missing items for the week.',
       ),
     ).toBe(false);
+  });
+});
+
+describe('looksLikeConfirmingWriteOffer', () => {
+  const offer = 'Here is a recipe. Would you like me to save it to your recipes?';
+
+  it('treats a bare yes after a save offer as a write request', () => {
+    expect(looksLikeConfirmingWriteOffer('yes', offer)).toBe(true);
+    expect(looksLikeConfirmingWriteOffer('Yes, please!', offer)).toBe(true);
+    expect(looksLikeConfirmingWriteOffer('save it', offer)).toBe(true);
+    expect(looksLikeConfirmingWriteOffer('好', '要不要幫你儲存這個食譜？')).toBe(true);
+  });
+
+  it('ignores confirmations without a prior write offer', () => {
+    expect(looksLikeConfirmingWriteOffer('yes', 'Chicken pairs well with lemon.')).toBe(
+      false,
+    );
+    expect(looksLikeConfirmingWriteOffer('yes', undefined)).toBe(false);
+  });
+
+  it('ignores non-confirmation replies', () => {
+    expect(looksLikeConfirmingWriteOffer('what about pasta instead?', offer)).toBe(false);
   });
 });
