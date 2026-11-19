@@ -127,9 +127,41 @@ export function looksLikeFalseMutationSuccess(text: string): boolean {
   return false;
 }
 
-/** Short "yes / ok / save it" style replies that carry no domain words of their own. */
-const AFFIRMATIVE_RE =
-  /^\s*(yes|yeah|yep|yup|sure|ok(?:ay)?|please|go ahead|do it|save(?: it)?|add(?: it| them)?|confirm|approve|sounds good|好|好的|好啊|可以|要|是|確認|請|沒問題|儲存|保存|加入|新增)[\s!.,。！，]*(please|thanks|thank you|謝謝|吧|喔|哦)?[\s!.,。！，]*$/iu;
+const REPLY_SEP = '[\\s,，、.!！。?？~]*';
+
+function buildReplyRegex(core: string, filler: string): RegExp {
+  return new RegExp(
+    `^${REPLY_SEP}(?:${core})(?:${REPLY_SEP}(?:${core}|${filler}))*${REPLY_SEP}$`,
+    'iu',
+  );
+}
+
+const REPLY_FILLER =
+  "please|thanks|thank you|thx|it|them|that|this|now|all|these|those|changes|for me|吧|喔|哦|啦|了|謝謝|謝了|請|一下|它|這個|那個|全部";
+
+/** Short "yes / ok / save it" style replies (also "yes, save it", "Yes please", "approve"). */
+const AFFIRMATIVE_RE = buildReplyRegex(
+  "yes|yeah|yep|yup|y|sure|ok|okay|go ahead|go for it|do it|save|add|confirm|confirmed|approve|approved|accept|apply|proceed|sounds good|looks good|lgtm|correct|right|好|好的|好啊|好喔|可以|要|是|是的|對|沒問題|確認|確定|儲存|保存|加入|新增|同意|批准|執行|沒錯",
+  REPLY_FILLER,
+);
+
+/** Short "no / cancel / reject" style replies (also "no thanks", "don't save it"). */
+const NEGATIVE_RE = buildReplyRegex(
+  "no|nope|nah|n|cancel|reject|rejected|decline|deny|discard|skip|stop|never\\s*mind|not now|don['’]?t(?:\\s+(?:save|add|do))?|do not(?:\\s+(?:save|add|do))?|不要|不用|不必|不|否|取消|拒絕|拒绝|算了|別|别|先不要|不好|不可以|不行|不需要",
+  REPLY_FILLER,
+);
+
+/** True when the whole message is a clear typed "yes" (approve). */
+export function isAffirmativeReply(text: string): boolean {
+  const t = text.trim();
+  return t.length > 0 && t.length <= 60 && AFFIRMATIVE_RE.test(t);
+}
+
+/** True when the whole message is a clear typed "no" (reject). */
+export function isNegativeReply(text: string): boolean {
+  const t = text.trim();
+  return t.length > 0 && t.length <= 60 && NEGATIVE_RE.test(t);
+}
 
 /** Assistant text that offers to save / add something to the user's data. */
 const WRITE_OFFER_RE =
@@ -145,5 +177,5 @@ export function looksLikeConfirmingWriteOffer(
   previousAssistantText?: string | null,
 ): boolean {
   if (!previousAssistantText) return false;
-  return AFFIRMATIVE_RE.test(text) && WRITE_OFFER_RE.test(previousAssistantText);
+  return isAffirmativeReply(text) && WRITE_OFFER_RE.test(previousAssistantText);
 }

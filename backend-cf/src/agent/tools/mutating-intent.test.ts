@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isAffirmativeReply,
+  isNegativeReply,
   looksLikeConfirmingWriteOffer,
   looksLikeFalseMutationSuccess,
   looksLikeMutatingUserRequest,
@@ -102,5 +104,34 @@ describe('looksLikeConfirmingWriteOffer', () => {
 
   it('ignores non-confirmation replies', () => {
     expect(looksLikeConfirmingWriteOffer('what about pasta instead?', offer)).toBe(false);
+  });
+});
+
+describe('isAffirmativeReply / isNegativeReply', () => {
+  it('matches natural affirmatives, including multi-phrase', () => {
+    for (const t of ['yes', 'yes, save it', 'Yes please', 'ok', 'approve', 'save it', 'go ahead', '好', '好的', '確認', '好，謝謝']) {
+      expect(isAffirmativeReply(t), t).toBe(true);
+      expect(isNegativeReply(t), t).toBe(false);
+    }
+  });
+
+  it('matches natural negatives', () => {
+    for (const t of ['no', 'No thanks', 'cancel', 'reject', "don't save it", '不要', '取消', '不用了']) {
+      expect(isNegativeReply(t), t).toBe(true);
+      expect(isAffirmativeReply(t), t).toBe(false);
+    }
+  });
+
+  it('rejects mixed or unrelated text', () => {
+    for (const t of ['no, save it', 'yes but make it 3', 'add milk too', 'what can I cook?', '']) {
+      expect(isAffirmativeReply(t), t).toBe(false);
+      expect(isNegativeReply(t), t).toBe(false);
+    }
+  });
+
+  it('confirming-write-offer now matches "yes, save it"', () => {
+    expect(
+      looksLikeConfirmingWriteOffer('yes, save it', 'Would you like me to save this to your pantry?'),
+    ).toBe(true);
   });
 });
