@@ -80,6 +80,23 @@ export function resolveTodayLocalDate(
   return utcCalendarDate(now);
 }
 
+/**
+ * App UI terms per reply language (mirrors the web app's locale files, nav /
+ * page labels). Replies must use these exact words so they match what the
+ * user sees on screen (zh UI says 行事曆, not 日曆 / 月曆).
+ */
+export const UI_GLOSSARY: Record<ChatLanguage, Record<string, string>> = {
+  en: { Calendar: 'Calendar', Pantry: 'Pantry', 'Shopping list': 'Shopping list', Recipes: 'Recipes' },
+  zh: { Calendar: '行事曆', Pantry: '庫存', 'Shopping list': '購物清單', Recipes: '食譜' },
+};
+
+export function buildUiGlossaryLine(language: ChatLanguage): string {
+  const terms = Object.entries(UI_GLOSSARY[language])
+    .map(([en, local]) => `${en} = 「${local}」`)
+    .join(', ');
+  return `App UI terms (use exactly these words for the app's screens, never synonyms): ${terms}.`;
+}
+
 /** Dynamic tail (date + reply language). Kept after the static prefix for prompt caching. */
 export function buildSystemPromptTail(options: {
   todayLocalDate: string;
@@ -88,6 +105,7 @@ export function buildSystemPromptTail(options: {
   return `6. Calendar context
 - Today's local calendar date is ${options.todayLocalDate} (YYYY-MM-DD).
 - When the user says 今天/today (or relative days like tomorrow/明天), derive meal-plan serving_date from this date. Do not invent a different calendar date or year for "today".
+${buildUiGlossaryLine(options.language ?? 'en')}
 
 Reply language: ${languageDisplayName(options.language ?? 'en')}. Keep tool argument names/units in the same language.`;
 }

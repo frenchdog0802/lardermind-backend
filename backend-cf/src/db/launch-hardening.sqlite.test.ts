@@ -206,3 +206,20 @@ describe('real SQL: soft delete', () => {
     expect(await softDeleteUser(db, U)).toBe(false);
   });
 });
+
+describe('real SQL: shopping merge-add converts compatible units', () => {
+  it('Salt 22.5 g + 100 g = 122.5 g; 1 kg converts; pcs stays separate', async () => {
+    const { db } = setup();
+    await createShoppingListItem(db, U, { name: 'Salt', quantity: 22.5, unit: 'g' });
+    const a = await mergeAddShoppingListItem(db, U, { name: 'salt', quantity: 100, unit: 'g' });
+    expect(a.merged).toBe(true);
+    expect(Number(a.item.quantity)).toBe(122.5);
+    const b = await mergeAddShoppingListItem(db, U, { name: 'Salt', quantity: 1, unit: 'kg' });
+    expect(b.merged).toBe(true);
+    expect(b.item.unit).toBe('g');
+    expect(Number(b.item.quantity)).toBe(1122.5);
+    const c = await mergeAddShoppingListItem(db, U, { name: 'Salt', quantity: 2, unit: 'pcs' });
+    expect(c.merged).toBe(false);
+    expect(c.item.id).not.toBe(a.item.id);
+  });
+});
