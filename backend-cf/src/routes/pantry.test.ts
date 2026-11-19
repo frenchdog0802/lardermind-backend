@@ -41,7 +41,7 @@ function createMockDb() {
             } as T;
           }
           const all = [...items.values()];
-          if (sql.includes('LOWER(name)')) {
+          if (sql.includes('LOWER(name)') || sql.includes('name = ? COLLATE NOCASE')) {
             const userId = bound[0] as string;
             const name = String(bound[1]).toLowerCase();
             return (

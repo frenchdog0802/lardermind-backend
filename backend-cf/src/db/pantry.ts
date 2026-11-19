@@ -185,7 +185,7 @@ export async function findByNameCi(
 ): Promise<PantryItemRow | null> {
   return db
     .prepare(
-      `SELECT * FROM pantry_items WHERE user_id = ? AND LOWER(name) = LOWER(?) LIMIT 1`,
+      `SELECT * FROM pantry_items WHERE user_id = ? AND name = ? COLLATE NOCASE LIMIT 1`,
     )
     .bind(userId, name)
     .first<PantryItemRow>();

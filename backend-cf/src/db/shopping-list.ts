@@ -203,7 +203,7 @@ export async function findUncheckedByNameUnitCi(
     .prepare(
       `SELECT * FROM shopping_list_items
        WHERE user_id = ? AND checked = 0
-         AND TRIM(name) = ? COLLATE NOCASE
+         AND name = ? COLLATE NOCASE
          AND COALESCE(NULLIF(TRIM(unit), ''), 'pcs') = ? COLLATE NOCASE
        ORDER BY created_at ASC LIMIT 1`,
     )

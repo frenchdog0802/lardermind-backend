@@ -40,7 +40,7 @@ const db = {
           return (shopping.get(String(bound[0])) ?? null) as T;
         }
         if (sql.includes('FROM pantry_items')) {
-          if (sql.includes('LOWER(name) = LOWER(?)')) {
+          if (sql.includes('name = ? COLLATE NOCASE')) {
             const name = String(bound[1]).toLowerCase();
             return ([...pantry.values()].find(
               (r) => r.name.toLowerCase() === name,

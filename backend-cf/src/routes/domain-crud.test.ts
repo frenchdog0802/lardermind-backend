@@ -145,7 +145,7 @@ function createMockDb() {
             return row as T;
           }
           if (sql.includes('FROM pantry_items')) {
-            if (sql.includes('LOWER(name)')) {
+            if (sql.includes('LOWER(name)') || sql.includes('name = ? COLLATE NOCASE')) {
               const userId = bound[0] as string;
               const name = String(bound[1]).toLowerCase();
               return (
