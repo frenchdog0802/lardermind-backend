@@ -2261,4 +2261,14 @@ describe('launch hardening: batching and query counts', () => {
       'CONFIRMED',
     );
   });
+
+  it('meal-plan list accepts an optional from/to window and rejects bad dates', async () => {
+    await seedWeek();
+    expect((await j('/api/meal-plan?from=bad')).status).toBe(400);
+    const all = (await (await j('/api/meal-plan')).json()) as { data: unknown[] };
+    expect(all.data).toHaveLength(4);
+    mock.queries.length = 0;
+    await j('/api/meal-plan?from=2026-09-21&to=2026-09-22');
+    expect(mock.queries.some((q) => q.includes('serving_date >= ?') && q.includes('serving_date <= ?'))).toBe(true);
+  });
 });

@@ -138,7 +138,13 @@ mealPlanRoutes.post('/api/meal-plan/:id/skip', async (c) => {
 
 mealPlanRoutes.get('/api/meal-plan', async (c) => {
   const userId = c.get('userId');
-  const rows = await listMealPlans(c.env.DB, userId, c.req.query('query'));
+  // Optional inclusive date window (YYYY-MM-DD); absent => every plan, as before.
+  const from = c.req.query('from')?.trim();
+  const to = c.req.query('to')?.trim();
+  if ((from && !DATE_RE.test(from)) || (to && !DATE_RE.test(to))) {
+    return c.json(fail('from and to must be YYYY-MM-DD'), 400);
+  }
+  const rows = await listMealPlans(c.env.DB, userId, c.req.query('query'), { from, to });
   return c.json(ok(rows.map(toMealPlanDto)));
 });
 
