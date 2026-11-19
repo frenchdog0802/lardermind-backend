@@ -70,7 +70,8 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     type: 'function',
     function: {
       name: 'suggestMealsFromPantry',
-      description: 'Suggest saved recipes that match pantry ingredients.',
+      description:
+        'Suggest saved recipes that match pantry ingredients. Each suggestion has cookStatus (cookable | conditionally_cookable | uncookable), missingMains, conditionalSeasonings. actions with action_required define_unit mean a unit card is shown to the user; call this tool again after they define the conversion.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
@@ -289,7 +290,8 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     type: 'function',
     function: {
       name: 'addRecipeToMenu',
-      description: 'Schedule a recipe on the meal plan (requires approval).',
+      description:
+        'Schedule ONE dish on the meal plan (requires approval). Pass recipe_id and/or meal_name (at least one; the server takes the name from the recipe when meal_name is empty and rejects a nameless meal). For several dishes or days use planMeals.',
       parameters: {
         type: 'object',
         properties: {
@@ -314,7 +316,7 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     function: {
       name: 'planMeals',
       description:
-        'Schedule multiple meals on the calendar (requires approval). Prefer over repeated addRecipeToMenu for multi-day plans. Does not deduct pantry; soft-reserves only.',
+        'Schedule multiple dishes on the calendar (requires approval). Prefer over repeated addRecipeToMenu for multi-day plans. A slot may hold several dishes: add one entry per dish (main, side, soup) with the same serving_date and meal_type; never merge dishes into one name. Include every dish of the plan the user confirmed (max 28 entries per call). Result: created (saved rows), createdCount, requested, byDate {date: {meal_type: names}}, existingInSlot (meals already in those slots before this call), errors, truncated — report only what is in created/byDate and name anything not saved. Does not deduct pantry; soft-reserves only.',
       parameters: {
         type: 'object',
         properties: {
@@ -347,7 +349,7 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     function: {
       name: 'getMealPlanAvailability',
       description:
-        'Read-only: week-allocate pantry against planned meals. Returns meals[] each with serving_date, meal_name, meal_type, status, and that meal\'s shortages — narrate per-meal first. weekShortages/shoppingHints are a deduped aggregate for an optional shopping offer only. Does not write pantry.',
+        "Read-only: week-allocate pantry against planned meals. Returns meals[] each with serving_date, meal_name, meal_type, status (ok | short | unknown), and that meal's shortages. Narrate per meal first: for each short entry give its serving_date, meal_name and only its own shortages. Never put meal A's shortages under meal B's heading, and do not invent doubt that a list belongs to another dish. status unknown = no usable recipe; say it cannot be scored, do not fabricate ingredients. Shortage reason unit_mismatch = ask how to convert. weekShortages/shoppingHints are a deduped aggregate for an optional shopping offer only, after the per-meal breakdown (or when the user asks for one combined cart); to add them use addMealPlanShortagesToShoppingList. Does not write pantry.",
       parameters: {
         type: 'object',
         properties: {

@@ -901,7 +901,7 @@ export async function executeTool(
         content: JSON.stringify({
           ...result,
           shoppingHints,
-          note: 'Read-only soft-reserve preview. Use addItemsToShoppingList for deficits after user approval.',
+          note: 'Read-only soft-reserve preview. Use addMealPlanShortagesToShoppingList (after user approval) to add these deficits to the shopping list.',
         }),
       };
     }

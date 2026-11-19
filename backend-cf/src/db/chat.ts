@@ -40,6 +40,8 @@ export type PendingInterrupt = {
   pendingTools: PendingToolSummary[];
   toolCalls: PendingToolCall[];
   messages: Array<Record<string, unknown>>;
+  /** Reply language of the turn that created it ('zh' | 'en'). Missing on older rows. */
+  language?: 'zh' | 'en';
 };
 
 /** Pending approvals older than this are treated as rejected. */

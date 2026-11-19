@@ -32,8 +32,14 @@ describe('HITL helpers', () => {
     expect(
       argsSummary('removePantryItems', {
         items: [{ name: '排骨' }],
-      }),
+      }, 'zh'),
     ).toBe('刪除 排骨');
+    // English chats no longer get a hard-coded Chinese verb.
+    expect(
+      argsSummary('removePantryItems', {
+        items: [{ name: 'pork ribs' }],
+      }),
+    ).toBe('remove pork ribs');
     expect(
       argsSummary('createRecipe', { meal_name: 'Pasta' }),
     ).toBe('Pasta');
@@ -72,6 +78,29 @@ describe('HITL helpers', () => {
       '10 meals (2026-11-20…2026-11-24): 2026-11-20 Main 1, Side 1; 2026-11-21 Main 2, Side 2; ' +
         '2026-11-22 Main 3, Side 3; 2026-11-23 Main 4, Side 4; 2026-11-24 Main 5, Side 5',
     );
+  });
+
+  it('localises planMeals and other summaries for Chinese chats', () => {
+    expect(
+      argsSummary(
+        'planMeals',
+        {
+          meals: [
+            { meal_name: '紅燒排骨', meal_type: 'dinner', serving_date: '2026-11-20' },
+            { meal_name: '蒜炒菠菜', meal_type: 'dinner', serving_date: '2026-11-20' },
+          ],
+        },
+        'zh',
+      ),
+    ).toBe('2 道菜 (2026-11-20): 2026-11-20 紅燒排骨, 蒜炒菠菜');
+    expect(argsSummary('updatePreferences', {}, 'zh')).toBe('更新偏好設定');
+    expect(argsSummary('updatePreferences', {})).toBe('update preferences');
+    expect(
+      toPendingTools(
+        [{ id: 'x', name: 'removePantryItems', arguments: { items: [{ name: '鹽' }] } }],
+        'zh',
+      ),
+    ).toEqual([{ name: 'removePantryItems', argsSummary: '刪除 鹽', id: 'x' }]);
   });
 
   it('planMeals approval caps the dish list and labels mixed meal types', () => {

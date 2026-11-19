@@ -200,6 +200,7 @@ chatRoutes.post('/api/chat/stream', async (c) => {
     message: body.message.trim(),
     clientLocalDate: optionalClientLocalDate(body.clientLocalDate),
     isGuest: c.get('isGuest'),
+    language: body.language,
   });
 });
 
@@ -230,6 +231,7 @@ chatRoutes.post('/api/chat/send', async (c) => {
     message: body.message.trim(),
     clientLocalDate: optionalClientLocalDate(body.clientLocalDate),
     isGuest: c.get('isGuest'),
+    language: body.language,
   });
 
   if (turn.kind === 'busy') {
@@ -289,6 +291,7 @@ chatRoutes.post('/api/chat/resume', async (c) => {
     decision: body.decision,
     note: body.note,
     interruptId: body.interruptId,
+    language: body.language,
   });
 
   if (turn.kind === 'error') {

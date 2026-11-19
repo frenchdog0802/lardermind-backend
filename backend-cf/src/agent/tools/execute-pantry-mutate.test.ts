@@ -137,8 +137,13 @@ describe('pantry mutate tools registration', () => {
     expect(
       argsSummary('removePantryItems', {
         items: [{ name: '排骨' }],
-      }),
+      }, 'zh'),
     ).toBe('刪除 排骨');
+    expect(
+      argsSummary('removePantryItems', {
+        items: [{ name: 'ribs' }],
+      }, 'en'),
+    ).toBe('remove ribs');
   });
 });
 
