@@ -1,4 +1,5 @@
 import { nowUnixSeconds } from '../lib/time';
+import { selectInChunks, type PageParams } from './sql-utils';
 
 export type RecipeRow = {
   id: string;
@@ -126,16 +127,18 @@ export async function listRecipes(
   db: D1Database,
   userId: string,
   query?: string,
+  page?: PageParams | null,
 ): Promise<RecipeRow[]> {
-  const sql = query?.trim()
+  const q = query?.trim();
+  // Optional paging keeps a stable order via an id tie-breaker; unpaged SQL is unchanged.
+  const tail = page ? ' ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?' : ' ORDER BY created_at ASC';
+  const sql = q
     ? `SELECT * FROM recipes
-       WHERE user_id = ? AND LOWER(meal_name) LIKE LOWER(?)
-       ORDER BY created_at ASC`
-    : `SELECT * FROM recipes WHERE user_id = ? ORDER BY created_at ASC`;
-  const stmt = db.prepare(sql);
-  const result = query?.trim()
-    ? await stmt.bind(userId, `%${query.trim()}%`).all<RecipeRow>()
-    : await stmt.bind(userId).all<RecipeRow>();
+       WHERE user_id = ? AND LOWER(meal_name) LIKE LOWER(?)${tail}`
+    : `SELECT * FROM recipes WHERE user_id = ?${tail}`;
+  const binds: unknown[] = q ? [userId, `%${q}%`] : [userId];
+  if (page) binds.push(page.limit, page.offset);
+  const result = await db.prepare(sql).bind(...binds).all<RecipeRow>();
   return result.results ?? [];
 }
 
@@ -161,30 +164,54 @@ export async function getRecipe(
     .first<RecipeRow>();
 }
 
-async function insertRecipeIngredients(
-  db: D1Database,
+function buildIngredientRows(
   recipeId: string,
   ingredients: RecipeIngredientInput[],
-): Promise<void> {
-  for (let i = 0; i < ingredients.length; i++) {
-    const ing = ingredients[i];
-    await db
+): RecipeIngredientRow[] {
+  return ingredients.map((ing, i) => ({
+    id: crypto.randomUUID(),
+    recipe_id: recipeId,
+    name: ing.name,
+    quantity: String(ing.quantity),
+    unit: ing.unit,
+    ingredient_id: ing.ingredient_id ?? null,
+    sort_order: i,
+  }));
+}
+
+function insertIngredientStatements(
+  db: D1Database,
+  rows: RecipeIngredientRow[],
+): D1PreparedStatement[] {
+  return rows.map((r) =>
+    db
       .prepare(
         `INSERT INTO recipe_ingredients
           (id, recipe_id, name, quantity, unit, ingredient_id, sort_order)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(
-        crypto.randomUUID(),
-        recipeId,
-        ing.name,
-        String(ing.quantity),
-        ing.unit,
-        ing.ingredient_id ?? null,
-        i,
-      )
-      .run();
+      .bind(r.id, r.recipe_id, r.name, r.quantity, r.unit, r.ingredient_id, r.sort_order),
+  );
+}
+
+/** One grouped query (chunked IN) instead of one query per recipe. Ordered by sort_order. */
+export async function listIngredientRowsForRecipes(
+  db: D1Database,
+  recipeIds: string[],
+): Promise<Map<string, RecipeIngredientRow[]>> {
+  const rows = await selectInChunks<RecipeIngredientRow>(
+    db,
+    recipeIds,
+    (ph) =>
+      `SELECT * FROM recipe_ingredients WHERE recipe_id IN (${ph}) ORDER BY sort_order ASC`,
+  );
+  const grouped = new Map<string, RecipeIngredientRow[]>();
+  for (const row of rows) {
+    const list = grouped.get(row.recipe_id);
+    if (list) list.push(row);
+    else grouped.set(row.recipe_id, [row]);
   }
+  return grouped;
 }
 
 export async function createRecipe(
@@ -194,31 +221,42 @@ export async function createRecipe(
 ): Promise<RecipeDto> {
   const id = crypto.randomUUID();
   const now = nowUnixSeconds();
-  await db
-    .prepare(
-      `INSERT INTO recipes
-        (id, user_id, folder_id, meal_name, instructions, image_url, image_public_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .bind(
-      id,
-      userId,
-      input.folder_id ?? null,
-      input.meal_name,
-      instructionsToText(input.instructions),
-      input.image_url ?? null,
-      input.image_public_id ?? null,
-      now,
-      now,
-    )
-    .run();
+  const row: RecipeRow = {
+    id,
+    user_id: userId,
+    folder_id: input.folder_id ?? null,
+    meal_name: input.meal_name,
+    instructions: instructionsToText(input.instructions),
+    image_url: input.image_url ?? null,
+    image_public_id: input.image_public_id ?? null,
+    created_at: now,
+    updated_at: now,
+  };
+  const ingredientRows = buildIngredientRows(id, input.ingredients ?? []);
 
-  await insertRecipeIngredients(db, id, input.ingredients ?? []);
+  // One atomic batch: recipe row + every ingredient.
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO recipes
+          (id, user_id, folder_id, meal_name, instructions, image_url, image_public_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        row.id,
+        row.user_id,
+        row.folder_id,
+        row.meal_name,
+        row.instructions,
+        row.image_url,
+        row.image_public_id,
+        now,
+        now,
+      ),
+    ...insertIngredientStatements(db, ingredientRows),
+  ]);
 
-  const row = await getRecipe(db, userId, id);
-  if (!row) throw new Error('Failed to load created recipe');
-  const ingredients = await listRecipeIngredientRows(db, id);
-  return toRecipeDto(row, ingredients);
+  return toRecipeDto(row, ingredientRows);
 }
 
 export async function updateRecipe(
@@ -230,54 +268,56 @@ export async function updateRecipe(
   const existing = await getRecipe(db, userId, id);
   if (!existing) return null;
 
-  const mealName = patch.meal_name ?? existing.meal_name;
-  const folderId =
-    patch.folder_id !== undefined
-      ? (patch.folder_id ?? null)
-      : existing.folder_id;
-  const instructions =
-    patch.instructions !== undefined
-      ? instructionsToText(patch.instructions)
-      : existing.instructions;
-  const imageUrl =
-    patch.image_url !== undefined ? patch.image_url : existing.image_url;
-  const imagePublicId =
-    patch.image_public_id !== undefined
-      ? patch.image_public_id
-      : existing.image_public_id;
-  const now = nowUnixSeconds();
+  const row: RecipeRow = {
+    ...existing,
+    meal_name: patch.meal_name ?? existing.meal_name,
+    folder_id:
+      patch.folder_id !== undefined ? (patch.folder_id ?? null) : existing.folder_id,
+    instructions:
+      patch.instructions !== undefined
+        ? instructionsToText(patch.instructions)
+        : existing.instructions,
+    image_url: patch.image_url !== undefined ? patch.image_url : existing.image_url,
+    image_public_id:
+      patch.image_public_id !== undefined ? patch.image_public_id : existing.image_public_id,
+    updated_at: nowUnixSeconds(),
+  };
 
-  await db
-    .prepare(
-      `UPDATE recipes
-       SET folder_id = ?, meal_name = ?, instructions = ?,
-           image_url = ?, image_public_id = ?, updated_at = ?
-       WHERE id = ? AND user_id = ?`,
-    )
-    .bind(
-      folderId,
-      mealName,
-      instructions,
-      imageUrl,
-      imagePublicId,
-      now,
-      id,
-      userId,
-    )
-    .run();
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `UPDATE recipes
+         SET folder_id = ?, meal_name = ?, instructions = ?,
+             image_url = ?, image_public_id = ?, updated_at = ?
+         WHERE id = ? AND user_id = ?`,
+      )
+      .bind(
+        row.folder_id,
+        row.meal_name,
+        row.instructions,
+        row.image_url,
+        row.image_public_id,
+        row.updated_at,
+        id,
+        userId,
+      ),
+  ];
 
+  let ingredientRows: RecipeIngredientRow[];
   if (patch.ingredients !== undefined) {
-    await db
-      .prepare(`DELETE FROM recipe_ingredients WHERE recipe_id = ?`)
-      .bind(id)
-      .run();
-    await insertRecipeIngredients(db, id, patch.ingredients);
+    ingredientRows = buildIngredientRows(id, patch.ingredients);
+    // DELETE + inserts in the same batch (atomic: never leaves a recipe without ingredients).
+    statements.push(
+      db.prepare(`DELETE FROM recipe_ingredients WHERE recipe_id = ?`).bind(id),
+      ...insertIngredientStatements(db, ingredientRows),
+    );
+    await db.batch(statements);
+  } else {
+    await db.batch(statements);
+    ingredientRows = await listRecipeIngredientRows(db, id);
   }
 
-  const row = await getRecipe(db, userId, id);
-  if (!row) return null;
-  const ingredients = await listRecipeIngredientRows(db, id);
-  return toRecipeDto(row, ingredients);
+  return toRecipeDto(row, ingredientRows);
 }
 
 export async function deleteRecipe(

@@ -7,7 +7,7 @@ import {
   createRecipe,
   deleteRecipe,
   getRecipeDto,
-  listRecipeIngredientRows,
+  listIngredientRowsForRecipes,
   listRecipes,
   toRecipeDto,
   updateRecipe,
@@ -15,6 +15,7 @@ import {
   type RecipeInput,
   type RecipePatch,
 } from '../db/recipe';
+import { parsePage } from '../db/sql-utils';
 
 export const recipeRoutes = new Hono<{
   Bindings: Env;
@@ -150,13 +151,14 @@ function parsePatchInput(
 
 recipeRoutes.get('/api/recipe', async (c) => {
   const userId = c.get('userId');
-  const rows = await listRecipes(c.env.DB, userId, c.req.query('q'));
-  const dtos = await Promise.all(
-    rows.map(async (row) => {
-      const ingredients = await listRecipeIngredientRows(c.env.DB, row.id);
-      return toRecipeDto(row, ingredients);
-    }),
+  const page = parsePage(c.req.query('limit'), c.req.query('cursor'));
+  if (!page.ok) return c.json(fail(page.message), 400);
+  const rows = await listRecipes(c.env.DB, userId, c.req.query('q'), page.value);
+  const byRecipe = await listIngredientRowsForRecipes(
+    c.env.DB,
+    rows.map((r) => r.id),
   );
+  const dtos = rows.map((row) => toRecipeDto(row, byRecipe.get(row.id) ?? []));
   return c.json(ok(dtos));
 });
 

@@ -43,15 +43,31 @@ function createMockDb() {
     pantry: new Map(),
   };
 
+  const queries: string[] = [];
+  const batches: string[][] = [];
+
   const db = {
+    async batch(stmts: Array<{ __sql: string; __kind: () => Promise<unknown> }>) {
+      batches.push(stmts.map((s) => s.__sql));
+      const out: unknown[] = [];
+      for (const s of stmts) out.push(await s.__kind());
+      return out;
+    },
     prepare(sql: string) {
       let bound: unknown[] = [];
       return {
+        __sql: sql,
+        __kind(): Promise<unknown> {
+          return /^s*SELECT/i.test(sql) || sql.includes('RETURNING')
+            ? (this as any).all()
+            : (this as any).run();
+        },
         bind(...args: unknown[]) {
           bound = args;
           return this;
         },
         async first<T>() {
+          queries.push(sql);
           if (sql.includes('FROM users')) {
             const id = String(bound[0] ?? USER_A);
             return {
@@ -144,6 +160,7 @@ function createMockDb() {
           return null;
         },
         async all<T>() {
+          queries.push(sql);
           if (sql.includes('FROM shopping_list_items')) {
             const userId = bound[0] as string;
             let rows = [...store.shopping.values()].filter(
@@ -200,10 +217,22 @@ function createMockDb() {
                 r.meal_name.toLowerCase().includes(q),
               );
             }
+            rows = rows.sort(
+              (a, b) =>
+                (a.created_at ?? 0) - (b.created_at ?? 0) || a.id.localeCompare(b.id),
+            );
+            if (sql.includes('LIMIT ? OFFSET ?')) {
+              const [limit, offset] = bound.slice(-2) as [number, number];
+              rows = rows.slice(offset, offset + limit);
+            }
+            return { results: rows as T[] };
+          }
+          if (sql.includes('FROM recipe_ingredients') && sql.includes('recipe_id IN')) {
+            const ids = new Set(bound as string[]);
             return {
-              results: rows.sort(
-                (a, b) => (a.created_at ?? 0) - (b.created_at ?? 0),
-              ) as T[],
+              results: [...store.recipeIngredients.values()]
+                .filter((r) => ids.has(r.recipe_id))
+                .sort((a, b) => a.sort_order - b.sort_order) as T[],
             };
           }
           if (sql.includes('FROM recipe_ingredients')) {
@@ -247,6 +276,7 @@ function createMockDb() {
           return { results: [] as T[] };
         },
         async run() {
+          queries.push(sql);
           if (sql.includes('INSERT INTO user_preferences')) {
             const [
               id,
@@ -764,6 +794,17 @@ function createMockDb() {
             });
             return { meta: { changes: 1 } };
           }
+          if (sql.includes('DELETE FROM recipe_ingredients')) {
+            const recipeId = bound[0] as string;
+            let changes = 0;
+            for (const [k, v] of [...store.recipeIngredients]) {
+              if (v.recipe_id === recipeId) {
+                store.recipeIngredients.delete(k);
+                changes += 1;
+              }
+            }
+            return { meta: { changes } };
+          }
           if (sql.includes('DELETE FROM meal_plans')) {
             const id = bound[0] as string;
             const userId = bound[1] as string;
@@ -790,7 +831,7 @@ function createMockDb() {
     },
   };
 
-  return { db: db as unknown as D1Database, store };
+  return { db: db as unknown as D1Database, store, queries, batches };
 }
 
 async function authHeader(userId: string): Promise<string> {
@@ -2003,5 +2044,120 @@ describe('domain CRUD routes', () => {
       data: Array<{ name: string; quantity: number }>;
     };
     expect(pantryBody.data.find((p) => p.name === 'Egg')).toBeUndefined();
+  });
+});
+
+describe('launch hardening: batching and query counts', () => {
+  let mock: ReturnType<typeof createMockDb>;
+  let app: Hono<{ Bindings: Env }>;
+  let env: Env;
+
+  const j = async (path: string, init: RequestInit = {}) =>
+    app.request(
+      path,
+      {
+        ...init,
+        headers: {
+          Authorization: await authHeader(USER_A),
+          'Content-Type': 'application/json',
+        },
+      },
+      env,
+    );
+  const post = (path: string, body: unknown) =>
+    j(path, { method: 'POST', body: JSON.stringify(body) });
+
+  beforeEach(() => {
+    mock = createMockDb();
+    ({ app, env } = createApp(mock.db));
+  });
+
+  it('createRecipe writes the recipe and all ingredients in ONE batch', async () => {
+    const res = await post('/api/recipe', {
+      meal_name: 'Stew',
+      instructions: ['Cook'],
+      ingredients: [
+        { name: 'Beef', quantity: 500, unit: 'g' },
+        { name: 'Onion', quantity: 2, unit: 'pcs' },
+        { name: 'Salt', quantity: 1, unit: 'tsp' },
+      ],
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      data: { id: string; ingredients: Array<{ name: string; quantity: number; unit: string }> };
+    };
+    expect(body.data.ingredients.map((i) => i.name)).toEqual(['Beef', 'Onion', 'Salt']);
+    expect(body.data.ingredients[1]).toEqual({ name: 'Onion', quantity: 2, unit: 'pcs' });
+    const recipeBatches = mock.batches.filter((b) => b.some((s) => s.includes('INSERT INTO recipes')));
+    expect(recipeBatches).toHaveLength(1);
+    expect(recipeBatches[0]!.filter((s) => s.includes('INSERT INTO recipe_ingredients'))).toHaveLength(3);
+    // No re-select of the created recipe.
+    expect(mock.queries.filter((q) => /SELECT/i.test(q) && q.includes('FROM recipe'))).toHaveLength(0);
+    expect(mock.store.recipeIngredients.size).toBe(3);
+  });
+
+  it('updateRecipe replaces ingredients with DELETE + inserts in one batch', async () => {
+    const created = (await (
+      await post('/api/recipe', {
+        meal_name: 'Stew',
+        instructions: ['Cook'],
+        ingredients: [{ name: 'Beef', quantity: 500, unit: 'g' }],
+      })
+    ).json()) as { data: { id: string } };
+    mock.batches.length = 0;
+    const res = await j(`/api/recipe/${created.data.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        meal_name: 'Better Stew',
+        ingredients: [
+          { name: 'Lamb', quantity: 1, unit: 'kg' },
+          { name: 'Leek', quantity: 3, unit: 'pcs' },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { meal_name: string; instructions: string[]; ingredients: Array<{ name: string }> };
+    };
+    expect(body.data.meal_name).toBe('Better Stew');
+    expect(body.data.instructions).toEqual(['Cook']);
+    expect(body.data.ingredients.map((i) => i.name)).toEqual(['Lamb', 'Leek']);
+    expect(mock.batches).toHaveLength(1);
+    expect(mock.batches[0]!.map((s) => s.trim().split(/\s+/)[0])).toEqual([
+      'UPDATE',
+      'DELETE',
+      'INSERT',
+      'INSERT',
+    ]);
+    expect([...mock.store.recipeIngredients.values()].map((r) => r.name).sort()).toEqual([
+      'Lamb',
+      'Leek',
+    ]);
+  });
+
+  it('recipe list uses one ingredient query regardless of recipe count; paging is optional', async () => {
+    for (let i = 0; i < 5; i++) {
+      await post('/api/recipe', {
+        meal_name: `Dish ${i}`,
+        instructions: [],
+        ingredients: [
+          { name: `A${i}`, quantity: 1, unit: 'pcs' },
+          { name: `B${i}`, quantity: 2, unit: 'g' },
+        ],
+      });
+    }
+    mock.queries.length = 0;
+    const all = (await (await j('/api/recipe')).json()) as {
+      data: Array<{ meal_name: string; ingredients: Array<{ name: string }> }>;
+    };
+    expect(all.data).toHaveLength(5);
+    expect(all.data.find((r) => r.meal_name === 'Dish 3')!.ingredients.map((x) => x.name)).toEqual(['A3', 'B3']);
+    expect(mock.queries.filter((q) => q.includes('FROM recipe_ingredients'))).toHaveLength(1);
+
+    const paged = (await (await j('/api/recipe?limit=2&cursor=0')).json()) as {
+      data: Array<{ meal_name: string }>;
+    };
+    expect(paged.data).toHaveLength(2);
+    expect((await j('/api/recipe?limit=abc')).status).toBe(400);
   });
 });
