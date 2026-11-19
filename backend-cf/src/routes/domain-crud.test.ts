@@ -694,6 +694,13 @@ function createMockDb() {
             });
             return { meta: { changes: 1 } };
           }
+          if (sql.includes('UPDATE meal_plans SET status = ?, updated_at = ?')) {
+            const [status, updatedAt, id, userId] = bound as [string, number, string, string];
+            const row = store.mealPlans.get(id);
+            if (!row || row.user_id !== userId) return { meta: { changes: 0 } };
+            store.mealPlans.set(id, { ...row, status, updated_at: updatedAt });
+            return { meta: { changes: 1 } };
+          }
           if (sql.includes('UPDATE meal_plans')) {
             const [
               mealType,
@@ -765,6 +772,13 @@ function createMockDb() {
               created_at: createdAt,
               updated_at: updatedAt,
             });
+            return { meta: { changes: 1 } };
+          }
+          if (sql.includes('UPDATE pantry_items SET quantity = ?, updated_at = ?')) {
+            const [quantity, updatedAt, id, userId] = bound as [string, number, string, string];
+            const row = store.pantry.get(id);
+            if (!row || row.user_id !== userId) return { meta: { changes: 0 } };
+            store.pantry.set(id, { ...row, quantity, updated_at: updatedAt });
             return { meta: { changes: 1 } };
           }
           if (sql.includes('UPDATE pantry_items')) {
@@ -2159,5 +2173,92 @@ describe('launch hardening: batching and query counts', () => {
     };
     expect(paged.data).toHaveLength(2);
     expect((await j('/api/recipe?limit=abc')).status).toBe(400);
+  });
+
+  async function seedWeek() {
+    const ids: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const r = (await (
+        await post('/api/recipe', {
+          meal_name: `Meal ${i}`,
+          instructions: [],
+          ingredients: [
+            { name: 'Egg', quantity: 1, unit: 'pcs' },
+            { name: `Herb${i}`, quantity: 1, unit: 'pcs' },
+            { name: 'Flour', quantity: 100, unit: 'g' },
+          ],
+        })
+      ).json()) as { data: { id: string } };
+      ids.push(r.data.id);
+    }
+    await post('/api/pantry-item', { name: 'Egg', quantity: 10, unit: 'pcs' });
+    await post('/api/pantry-item', { name: 'Flour', quantity: 1, unit: 'kg' });
+    const plans: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const p = (await (
+        await post('/api/meal-plan', {
+          meal_type: 'dinner',
+          serving_date: `2026-09-2${i}`,
+          recipe_id: ids[i],
+          meal_name: `Meal ${i}`,
+        })
+      ).json()) as { data: { id: string } };
+      plans.push(p.data.id);
+    }
+    return plans;
+  }
+
+  it('week availability runs a constant number of queries (no per-meal lookups)', async () => {
+    await seedWeek();
+    mock.queries.length = 0;
+    const res = await j('/api/meal-plan/availability?from=2026-09-20&to=2026-09-23');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { meals: Array<{ status: string }>; weekShortages: Array<{ name: string }> };
+    };
+    expect(body.data.meals).toHaveLength(4);
+    expect(body.data.weekShortages.map((s) => s.name).sort()).toEqual([
+      'Herb0',
+      'Herb1',
+      'Herb2',
+      'Herb3',
+    ]);
+    // plans + pantry + recipes + one grouped ingredients query (+ nothing per meal).
+    expect(mock.queries.filter((q) => q.includes('FROM recipe_ingredients'))).toHaveLength(1);
+    expect(mock.queries.filter((q) => q.includes('FROM recipes'))).toHaveLength(1);
+    expect(mock.queries.filter((q) => q.includes('FROM meal_plans'))).toHaveLength(1);
+    expect(mock.queries.filter((q) => q.includes('FROM pantry_items'))).toHaveLength(1);
+    expect(mock.queries.length).toBeLessThanOrEqual(5);
+  });
+
+  it('confirm loads the pantry once and applies all deductions in one batch', async () => {
+    const plans = await seedWeek();
+    mock.queries.length = 0;
+    mock.batches.length = 0;
+    const res = await j(`/api/meal-plan/${plans[0]}/confirm`, { method: 'POST' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: {
+        mealPlan: { status: string };
+        deducted: Array<{ name: string; new_quantity: number }>;
+        shortages: Array<{ name: string }>;
+      };
+    };
+    expect(body.data.mealPlan.status).toBe('CONFIRMED');
+    expect(body.data.deducted.map((d) => d.name).sort()).toEqual(['Egg', 'Flour']);
+    expect(body.data.shortages.map((s) => s.name)).toEqual(['Herb0']);
+    expect(mock.queries.filter((q) => q.includes('FROM pantry_items'))).toHaveLength(1);
+    expect(mock.batches).toHaveLength(1);
+    expect(mock.batches[0]!.map((s) => s.trim().split(' ')[0])).toEqual([
+      'UPDATE',
+      'UPDATE',
+      'UPDATE',
+    ]);
+    const pantry = [...mock.store.pantry.values()];
+    expect(pantry.find((p) => p.name === 'Egg')!.quantity).toBe('9');
+    expect(pantry.find((p) => p.name === 'Flour')!.quantity).toBe('0.9');
+    expect([...mock.store.mealPlans.values()].find((p) => p.id === plans[0])!.status).toBe(
+      'CONFIRMED',
+    );
   });
 });

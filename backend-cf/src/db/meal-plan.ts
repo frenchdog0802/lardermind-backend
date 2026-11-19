@@ -1,14 +1,8 @@
 import { nowUnixSeconds } from '../lib/time';
-import {
-  deletePantryItem,
-  findByIngredientId,
-  findPantryByNameLoose,
-  listPantryItems,
-  updatePantryItem,
-  type PantryItemRow,
-} from './pantry';
+import { listPantryItems, type PantryItemRow } from './pantry';
 import {
   getRecipe,
+  listIngredientRowsForRecipes,
   listRecipeIngredientRows,
   listRecipes,
   type RecipeIngredientRow,
@@ -18,6 +12,7 @@ import {
   canonicalUnit,
   convertQtyBetweenItems,
   ingredientNameKey,
+  namesMatch,
 } from './units';
 
 export type MealPlanRow = {
@@ -224,12 +219,12 @@ export async function computePantrySoftReserve(
   from: string,
   to: string,
 ): Promise<PantrySoftReserveEntry[]> {
-  const [allPlans, pantryRows] = await Promise.all([
-    listMealPlans(db, userId),
+  const [rangePlans, pantryRows] = await Promise.all([
+    listMealPlans(db, userId, undefined, { from, to }),
     listPantryItems(db, userId),
   ]);
 
-  const plans = allPlans
+  const plans = rangePlans
     .filter(
       (p) =>
         isDateInRange(p.serving_date, from, to) &&
@@ -242,13 +237,12 @@ export async function computePantrySoftReserve(
     });
 
   const pool = buildPantryPool(pantryRows);
-  const recipesCache: { rows?: RecipeRow[] } = {};
+  const resolved = await loadPlanRecipes(db, userId, plans);
 
   for (const plan of plans) {
-    const recipe = await resolvePlanRecipe(db, userId, plan, recipesCache);
-    if (!recipe) continue;
-    const ingredients = await listRecipeIngredientRows(db, recipe.id);
-    allocateIngredientsAgainstPool(ingredients, pool, {
+    const hit = resolved.get(plan.id);
+    if (!hit) continue;
+    allocateIngredientsAgainstPool(hit.ingredients, pool, {
       hasRecipeId: true,
       recipeFound: true,
     });
@@ -462,15 +456,58 @@ export async function resolvePlanRecipe(
   plan: Pick<MealPlanRow, 'recipe_id' | 'meal_name'>,
   recipesCache?: { rows?: RecipeRow[] },
 ): Promise<RecipeRow | null> {
+  if (recipesCache) {
+    // Cached: load the user's recipes once and resolve entirely in memory.
+    recipesCache.rows ??= await listRecipes(db, userId);
+    return matchPlanRecipe(recipesCache.rows, plan);
+  }
   if (plan.recipe_id) {
     const byId = await getRecipe(db, userId, plan.recipe_id);
     if (byId) return byId;
   }
   const name = plan.meal_name?.trim().toLowerCase();
   if (!name) return null;
-  const rows = recipesCache?.rows ?? (await listRecipes(db, userId));
-  if (recipesCache) recipesCache.rows = rows;
+  const rows = await listRecipes(db, userId);
   return rows.find((r) => r.meal_name.trim().toLowerCase() === name) ?? null;
+}
+
+function matchPlanRecipe(
+  rows: RecipeRow[],
+  plan: Pick<MealPlanRow, 'recipe_id' | 'meal_name'>,
+): RecipeRow | null {
+  if (plan.recipe_id) {
+    const byId = rows.find((r) => r.id === plan.recipe_id);
+    if (byId) return byId;
+  }
+  const name = plan.meal_name?.trim().toLowerCase();
+  if (!name) return null;
+  return rows.find((r) => r.meal_name.trim().toLowerCase() === name) ?? null;
+}
+
+/**
+ * Resolve the recipe + ingredients for many plans with two queries total (all recipes, then
+ * one chunked IN query for the ingredients of the recipes actually used), grouped in memory.
+ */
+async function loadPlanRecipes(
+  db: D1Database,
+  userId: string,
+  plans: MealPlanRow[],
+): Promise<Map<string, { recipe: RecipeRow; ingredients: RecipeIngredientRow[] }>> {
+  const out = new Map<string, { recipe: RecipeRow; ingredients: RecipeIngredientRow[] }>();
+  if (plans.length === 0) return out;
+  const recipes = await listRecipes(db, userId);
+  const matched = new Map<string, RecipeRow>();
+  for (const plan of plans) {
+    const recipe = matchPlanRecipe(recipes, plan);
+    if (recipe) matched.set(plan.id, recipe);
+  }
+  const byRecipe = await listIngredientRowsForRecipes(db, [
+    ...new Set([...matched.values()].map((r) => r.id)),
+  ]);
+  for (const [planId, recipe] of matched) {
+    out.set(planId, { recipe, ingredients: byRecipe.get(recipe.id) ?? [] });
+  }
+  return out;
 }
 
 export async function computeWeekAvailability(
@@ -479,12 +516,12 @@ export async function computeWeekAvailability(
   from: string,
   to: string,
 ): Promise<WeekAvailabilityResult> {
-  const [allPlans, pantryRows] = await Promise.all([
-    listMealPlans(db, userId),
+  const [rangePlans, pantryRows] = await Promise.all([
+    listMealPlans(db, userId, undefined, { from, to }),
     listPantryItems(db, userId),
   ]);
 
-  const plans = allPlans
+  const plans = rangePlans
     .filter((p) => isDateInRange(p.serving_date, from, to))
     .sort((a, b) => {
       const d = a.serving_date.localeCompare(b.serving_date);
@@ -494,7 +531,11 @@ export async function computeWeekAvailability(
 
   const pool = buildPantryPool(pantryRows);
   const meals: MealAvailabilityEntry[] = [];
-  const recipesCache: { rows?: RecipeRow[] } = {};
+  const resolved = await loadPlanRecipes(
+    db,
+    userId,
+    plans.filter((p) => ACTIVE_PLAN_STATUSES.has(p.status)),
+  );
   const shortfallLists: MealConfirmShortage[][] = [];
 
   for (const plan of plans) {
@@ -503,14 +544,13 @@ export async function computeWeekAvailability(
       continue;
     }
 
-    const recipe = await resolvePlanRecipe(db, userId, plan, recipesCache);
-    if (!recipe) {
+    const hit = resolved.get(plan.id);
+    if (!hit) {
       meals.push(mealAvailabilityEntry(plan, 'unknown', []));
       continue;
     }
 
-    const ingredients = await listRecipeIngredientRows(db, recipe.id);
-    const result = allocateIngredientsAgainstPool(ingredients, pool, {
+    const result = allocateIngredientsAgainstPool(hit.ingredients, pool, {
       hasRecipeId: true,
       recipeFound: true,
     });
@@ -544,17 +584,32 @@ export async function listMealPlans(
   db: D1Database,
   userId: string,
   query?: string,
+  /** Optional inclusive serving_date range, applied in SQL (uses idx_meal_plans_user_date). */
+  range?: { from?: string; to?: string },
 ): Promise<MealPlanRow[]> {
-  const sql = query?.trim()
-    ? `SELECT * FROM meal_plans
-       WHERE user_id = ? AND LOWER(meal_name) LIKE LOWER(?)
-       ORDER BY serving_date ASC, created_at ASC`
-    : `SELECT * FROM meal_plans
-       WHERE user_id = ? ORDER BY serving_date ASC, created_at ASC`;
-  const stmt = db.prepare(sql);
-  const result = query?.trim()
-    ? await stmt.bind(userId, `%${query.trim()}%`).all<MealPlanRow>()
-    : await stmt.bind(userId).all<MealPlanRow>();
+  const where = ['user_id = ?'];
+  const binds: unknown[] = [userId];
+  const q = query?.trim();
+  if (q) {
+    where.push('LOWER(meal_name) LIKE LOWER(?)');
+    binds.push(`%${q}%`);
+  }
+  if (range?.from) {
+    where.push('serving_date >= ?');
+    binds.push(range.from);
+  }
+  if (range?.to) {
+    where.push('serving_date <= ?');
+    binds.push(range.to);
+  }
+  const result = await db
+    .prepare(
+      `SELECT * FROM meal_plans
+       WHERE ${where.join(' AND ')}
+       ORDER BY serving_date ASC, created_at ASC`,
+    )
+    .bind(...binds)
+    .all<MealPlanRow>();
   return result.results ?? [];
 }
 
@@ -672,17 +727,22 @@ export async function deleteMealPlan(
   return (result.meta?.changes ?? 0) > 0;
 }
 
-async function findPantryForIngredient(
-  db: D1Database,
-  userId: string,
+/**
+ * In-memory twin of the old per-ingredient lookups: by ingredient_id, then exact
+ * case-insensitive name, then loose name match ("Eggs" ~ "egg"). `rows` is created_at ordered.
+ */
+function findPantryInRows(
+  rows: PantryItemRow[],
   ing: RecipeIngredientRow,
-): Promise<PantryItemRow | null> {
+): PantryItemRow | null {
   if (ing.ingredient_id) {
-    const byId = await findByIngredientId(db, userId, ing.ingredient_id);
+    const byId = rows.find((r) => r.ingredient_id === ing.ingredient_id);
     if (byId) return byId;
   }
-  // Loose match (plural / "cooked rice" ~ "rice") so confirm agrees with the Need lights.
-  return findPantryByNameLoose(db, userId, ing.name);
+  const lower = ing.name.toLowerCase();
+  const exact = rows.find((r) => r.name.toLowerCase() === lower);
+  if (exact) return exact;
+  return rows.find((r) => namesMatch(r.name, ing.name)) ?? null;
 }
 
 export async function confirmMealPlan(
@@ -704,87 +764,110 @@ export async function confirmMealPlan(
 
   const shortages: MealConfirmShortage[] = [];
   const deducted: MealConfirmDeducted[] = [];
+  const now = nowUnixSeconds();
+  const writes: D1PreparedStatement[] = [];
 
-  {
-    const recipe = await resolvePlanRecipe(db, userId, plan);
-    if (recipe) {
-      const ingredients = await listRecipeIngredientRows(db, recipe.id);
-      for (const ing of ingredients) {
-        const needed = quantityFromRow(ing.quantity);
-        const unit = ing.unit ?? 'pcs';
-        const pantry = await findPantryForIngredient(db, userId, ing);
+  const recipe = await resolvePlanRecipe(db, userId, plan);
+  if (recipe) {
+    const [ingredients, pantryRows] = await Promise.all([
+      listRecipeIngredientRows(db, recipe.id),
+      listPantryItems(db, userId),
+    ]);
+    // Working copy so two recipe lines hitting the same pantry row see each other's deduction.
+    const pantryList = pantryRows.map((r) => ({ ...r }));
 
-        if (!pantry) {
-          shortages.push({
-            ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
-            name: ing.name,
-            needed,
-            available: 0,
-            unit,
-          });
-          continue;
-        }
+    for (const ing of ingredients) {
+      const needed = quantityFromRow(ing.quantity);
+      const unit = ing.unit ?? 'pcs';
+      const pantry = findPantryInRows(pantryList, ing);
 
-        const available = quantityFromRow(pantry.quantity);
-        let needInPantryUnit = needed;
-        let convertible = true;
-        if (!unitsMatch(unit, pantry.unit)) {
-          const conv = convertQtyBetweenItems(needed, unit, pantry.unit, ing.name, pantry.name);
-          if (conv == null) convertible = false;
-          else needInPantryUnit = conv;
-        } else {
-          needInPantryUnit = convertQtyBetweenItems(needed, unit, pantry.unit, ing.name, pantry.name) ?? needed;
-        }
-        if (!convertible) {
-          shortages.push({
-            ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
-            name: ing.name,
-            needed,
-            available: 0,
-            unit,
-            reason: 'unit_mismatch',
-          });
-          continue;
-        }
+      if (!pantry) {
+        shortages.push({
+          ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
+          name: ing.name,
+          needed,
+          available: 0,
+          unit,
+        });
+        continue;
+      }
 
-        const deductQty = Math.min(available, needInPantryUnit);
-        const newQty = available - deductQty;
+      const available = quantityFromRow(pantry.quantity);
+      let needInPantryUnit = needed;
+      let convertible = true;
+      if (!unitsMatch(unit, pantry.unit)) {
+        const conv = convertQtyBetweenItems(needed, unit, pantry.unit, ing.name, pantry.name);
+        if (conv == null) convertible = false;
+        else needInPantryUnit = conv;
+      } else {
+        needInPantryUnit = convertQtyBetweenItems(needed, unit, pantry.unit, ing.name, pantry.name) ?? needed;
+      }
+      if (!convertible) {
+        shortages.push({
+          ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
+          name: ing.name,
+          needed,
+          available: 0,
+          unit,
+          reason: 'unit_mismatch',
+        });
+        continue;
+      }
 
-        if (newQty <= 0) {
-          await deletePantryItem(db, userId, pantry.id);
-        } else {
-          await updatePantryItem(db, userId, pantry.id, { quantity: newQty });
-        }
+      const deductQty = Math.min(available, needInPantryUnit);
+      const newQty = available - deductQty;
 
-        if (deductQty > 0) {
-          deducted.push({
-            ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
-            name: ing.name,
-            deducted: deductQty,
-            previous_quantity: available,
-            new_quantity: Math.max(0, newQty),
-            unit: pantry.unit ?? unit,
-          });
-        }
+      if (newQty <= 0) {
+        writes.push(
+          db
+            .prepare(`DELETE FROM pantry_items WHERE id = ? AND user_id = ?`)
+            .bind(pantry.id, userId),
+        );
+        pantryList.splice(pantryList.indexOf(pantry), 1);
+      } else {
+        writes.push(
+          db
+            .prepare(
+              `UPDATE pantry_items SET quantity = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
+            )
+            .bind(String(newQty), now, pantry.id, userId),
+        );
+        pantry.quantity = String(newQty);
+      }
 
-        if (deductQty < needInPantryUnit) {
-          shortages.push({
-            ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
-            name: ing.name,
-            needed: needInPantryUnit,
-            available,
-            unit: pantry.unit ?? unit,
-          });
-        }
+      if (deductQty > 0) {
+        deducted.push({
+          ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
+          name: ing.name,
+          deducted: deductQty,
+          previous_quantity: available,
+          new_quantity: Math.max(0, newQty),
+          unit: pantry.unit ?? unit,
+        });
+      }
+
+      if (deductQty < needInPantryUnit) {
+        shortages.push({
+          ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
+          name: ing.name,
+          needed: needInPantryUnit,
+          available,
+          unit: pantry.unit ?? unit,
+        });
       }
     }
   }
 
-  const updated = await updateMealPlan(db, userId, id, { status: 'CONFIRMED' });
-  if (!updated) return null;
+  // Pantry deductions + status flip commit together (or not at all).
+  writes.push(
+    db
+      .prepare(`UPDATE meal_plans SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?`)
+      .bind('CONFIRMED', now, id, userId),
+  );
+  await db.batch(writes);
 
   return {
-    mealPlan: toMealPlanDto(updated),
+    mealPlan: toMealPlanDto({ ...plan, status: 'CONFIRMED', updated_at: now }),
     shortages,
     deducted,
     alreadyConfirmed: false,

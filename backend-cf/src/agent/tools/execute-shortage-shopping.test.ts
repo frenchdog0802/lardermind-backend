@@ -23,6 +23,8 @@ vi.mock('../../db/recipe', async (orig) => ({
     state.recipes.find((r) => r.id === id) ?? null,
   listRecipeIngredientRows: async (_db: unknown, id: string) =>
     state.ingredients.get(id) ?? [],
+  listIngredientRowsForRecipes: async (_db: unknown, ids: string[]) =>
+    new Map(ids.map((id) => [id, state.ingredients.get(id) ?? []] as const)),
 }));
 vi.mock('../../db/shopping-list', async (orig) => ({
   ...(await orig<typeof import('../../db/shopping-list')>()),
