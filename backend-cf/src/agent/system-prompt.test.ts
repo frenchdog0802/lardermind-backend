@@ -249,3 +249,17 @@ describe('planMeals side dishes (no silent rotation)', () => {
     expect(prompt).toMatch(/must contain every proposed dish for every day/);
   });
 });
+
+describe('UI glossary', () => {
+  it('zh prompt pins the app UI terms for calendar/pantry/shopping list/recipes', () => {
+    const p = buildCookingAssistantSystemPrompt({ todayLocalDate: '2026-10-11', language: 'zh' });
+    expect(p).toContain('Calendar = 「行事曆」');
+    expect(p).toContain('Pantry = 「庫存」');
+    expect(p).toContain('Shopping list = 「購物清單」');
+    expect(p).toContain('Recipes = 「食譜」');
+  });
+  it('en prompt uses English UI terms', () => {
+    const p = buildCookingAssistantSystemPrompt({ todayLocalDate: '2026-10-11', language: 'en' });
+    expect(p).toContain('Calendar = 「Calendar」');
+  });
+});
