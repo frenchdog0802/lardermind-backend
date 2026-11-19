@@ -14,11 +14,13 @@ import {
   clearHistory,
   createSession,
   deleteSession,
-  getPendingInterrupt,
   getSessionForUser,
   listHistory,
+  listHistoryPage,
   listSessions,
+  listSessionsPage,
   pendingInterruptForHistory,
+  pendingInterruptFromSession,
   updateSessionTitle,
 } from '../db/chat';
 import { streamCookingChat } from '../agent/stream-chat';
@@ -38,8 +40,32 @@ export const chatRoutes = new Hono<{ Bindings: Env; Variables: AuthVariables }>(
 
 chatRoutes.use('/api/chat/*', requireAuth);
 
+const MAX_CHAT_PAGE = 200;
+
+/** Optional `limit` + `before` (id cursor). Both absent => null (everything, as before). */
+function parseCursorPage(
+  limitRaw: string | undefined,
+  beforeRaw: string | undefined,
+): { ok: true; value: { limit: number; before?: string } | null } | { ok: false; message: string } {
+  const before = beforeRaw?.trim() || undefined;
+  if (limitRaw === undefined && !before) return { ok: true, value: null };
+  let limit = MAX_CHAT_PAGE;
+  if (limitRaw !== undefined) {
+    const n = Number(limitRaw);
+    if (!Number.isInteger(n) || n < 1) return { ok: false, message: 'Invalid limit' };
+    limit = Math.min(n, MAX_CHAT_PAGE);
+  }
+  return { ok: true, value: { limit, ...(before ? { before } : {}) } };
+}
+
 chatRoutes.get('/api/chat/sessions', async (c) => {
   const userId = c.get('userId');
+  const page = parseCursorPage(c.req.query('limit'), c.req.query('before'));
+  if (!page.ok) return c.json(fail(page.message), 400);
+  if (page.value) {
+    const { sessions, hasMore, nextBefore } = await listSessionsPage(c.env.DB, userId, page.value);
+    return c.json(ok({ sessions, hasMore, nextBefore }));
+  }
   const sessions = await listSessions(c.env.DB, userId);
   return c.json(ok({ sessions }));
 });
@@ -83,15 +109,30 @@ chatRoutes.get('/api/chat/history', async (c) => {
   if (!sessionId) {
     return c.json(fail('sessionId is required'), 400);
   }
-  const session = await getSessionForUser(c.env.DB, userId, sessionId);
+  const page = parseCursorPage(c.req.query('limit'), c.req.query('before'));
+  if (!page.ok) return c.json(fail(page.message), 400);
+  // Independent reads run together; the session row also carries the pending interrupt.
+  type HistoryRead = {
+    messages: Awaited<ReturnType<typeof listHistory>>;
+    hasMore?: boolean;
+    nextBefore?: string | null;
+  };
+  const historyRead: Promise<HistoryRead> = page.value
+    ? listHistoryPage(c.env.DB, userId, sessionId, page.value)
+    : listHistory(c.env.DB, userId, sessionId).then((messages) => ({ messages }));
+  const [session, history] = await Promise.all([
+    getSessionForUser(c.env.DB, userId, sessionId),
+    historyRead,
+  ]);
   if (!session) return c.json(fail('Session not found'), 404);
-  const messages = await listHistory(c.env.DB, userId, sessionId);
-  const pending = await getPendingInterrupt(c.env.DB, userId, sessionId);
-  const pendingInterrupt = pendingInterruptForHistory(pending);
+  const pendingInterrupt = pendingInterruptForHistory(pendingInterruptFromSession(session));
   return c.json(
     ok({
       sessionId,
-      messages,
+      messages: history.messages,
+      ...(history.hasMore !== undefined
+        ? { hasMore: history.hasMore, nextBefore: history.nextBefore ?? null }
+        : {}),
       ...(pendingInterrupt ? { pendingInterrupt } : {}),
     }),
   );

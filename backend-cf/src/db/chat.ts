@@ -143,6 +143,41 @@ export async function listSessions(
   return (results ?? []).map(toSessionDto);
 }
 
+export type CursorPage = { limit: number; before?: string };
+
+/**
+ * Optional paging for the session list: newest first, `before` = id of the last session of the
+ * previous page. Absent => callers use listSessions (everything, unchanged).
+ */
+export async function listSessionsPage(
+  db: D1Database,
+  userId: string,
+  page: CursorPage,
+): Promise<{ sessions: ChatSessionDto[]; hasMore: boolean; nextBefore: string | null }> {
+  const binds: unknown[] = [userId];
+  let cursor = '';
+  if (page.before) {
+    cursor = `AND (updated_at, rowid) < (SELECT updated_at, rowid FROM chat_sessions WHERE id = ? AND user_id = ?)`;
+    binds.push(page.before, userId);
+  }
+  binds.push(page.limit + 1);
+  const { results } = await db
+    .prepare(
+      `SELECT * FROM chat_sessions WHERE user_id = ? ${cursor}
+       ORDER BY updated_at DESC, rowid DESC LIMIT ?`,
+    )
+    .bind(...binds)
+    .all<ChatSessionRow>();
+  const rows = results ?? [];
+  const hasMore = rows.length > page.limit;
+  const pageRows = hasMore ? rows.slice(0, page.limit) : rows;
+  return {
+    sessions: pageRows.map(toSessionDto),
+    hasMore,
+    nextBefore: hasMore ? (pageRows[pageRows.length - 1]?.id ?? null) : null,
+  };
+}
+
 export async function createSession(
   db: D1Database,
   userId: string,
@@ -226,6 +261,19 @@ export async function deleteSession(
   return (result.meta.changes ?? 0) > 0;
 }
 
+function toHistoryDto(row: AiMessageRow): HistoryMessageDto {
+  return {
+    id: row.id,
+    role: row.role as 'user' | 'assistant',
+    content: row.content,
+    createdAt: row.created_at,
+    ...(row.response_type ? { responseType: row.response_type } : {}),
+    ...(row.card_data
+      ? { cardData: JSON.parse(row.card_data) as Record<string, unknown> }
+      : {}),
+  };
+}
+
 export async function listHistory(
   db: D1Database,
   userId: string,
@@ -238,16 +286,42 @@ export async function listHistory(
     .bind(userId, sessionId)
     .all<AiMessageRow>();
 
-  return (results ?? []).map((row) => ({
-    id: row.id,
-    role: row.role as 'user' | 'assistant',
-    content: row.content,
-    createdAt: row.created_at,
-    ...(row.response_type ? { responseType: row.response_type } : {}),
-    ...(row.card_data
-      ? { cardData: JSON.parse(row.card_data) as Record<string, unknown> }
-      : {}),
-  }));
+  return (results ?? []).map(toHistoryDto);
+}
+
+/**
+ * Optional paging for history: the newest `limit` messages (returned oldest-first, like the
+ * unpaged call). `before` = id of the oldest message already loaded, to fetch the page before it.
+ */
+export async function listHistoryPage(
+  db: D1Database,
+  userId: string,
+  sessionId: string,
+  page: CursorPage,
+): Promise<{ messages: HistoryMessageDto[]; hasMore: boolean; nextBefore: string | null }> {
+  const binds: unknown[] = [userId, sessionId];
+  let cursor = '';
+  if (page.before) {
+    cursor = `AND (created_at, rowid) < (SELECT created_at, rowid FROM ai_messages WHERE id = ? AND user_id = ? AND session_id = ?)`;
+    binds.push(page.before, userId, sessionId);
+  }
+  binds.push(page.limit + 1);
+  const { results } = await db
+    .prepare(
+      `SELECT * FROM ai_messages WHERE user_id = ? AND session_id = ? ${cursor}
+       ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+    )
+    .bind(...binds)
+    .all<AiMessageRow>();
+  const rows = results ?? [];
+  const hasMore = rows.length > page.limit;
+  const newestFirst = hasMore ? rows.slice(0, page.limit) : rows;
+  const ascending = newestFirst.slice().reverse();
+  return {
+    messages: ascending.map(toHistoryDto),
+    hasMore,
+    nextBefore: hasMore ? (ascending[0]?.id ?? null) : null,
+  };
 }
 
 export async function insertMessage(
@@ -372,18 +446,24 @@ export async function setPendingInterrupt(
     .run();
 }
 
-export async function getPendingInterrupt(
-  db: D1Database,
-  userId: string,
-  sessionId: string,
-): Promise<PendingInterrupt | null> {
-  const row = await getSessionForUser(db, userId, sessionId);
+/** Pending interrupt from an already-loaded session row (no extra query). */
+export function pendingInterruptFromSession(
+  row: Pick<ChatSessionRow, 'pending_interrupt_json'> | null | undefined,
+): PendingInterrupt | null {
   if (!row?.pending_interrupt_json) return null;
   try {
     return JSON.parse(row.pending_interrupt_json) as PendingInterrupt;
   } catch {
     return null;
   }
+}
+
+export async function getPendingInterrupt(
+  db: D1Database,
+  userId: string,
+  sessionId: string,
+): Promise<PendingInterrupt | null> {
+  return pendingInterruptFromSession(await getSessionForUser(db, userId, sessionId));
 }
 
 /** History-safe pending payload (tool summaries + ids; no toolCalls / LLM messages). */
