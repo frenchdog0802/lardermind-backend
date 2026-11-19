@@ -5,6 +5,7 @@ import { syncItemsToPantry, unsyncItemsFromPantry } from './shopping-list';
 
 const pantry = new Map<string, PantryItemRow>();
 const shopping = new Map<string, ShoppingListItemRow>();
+const batchSizes: number[] = [];
 
 function pantryRow(
   id: string,
@@ -51,6 +52,18 @@ const db = {
         return null;
       },
       async all() {
+        // Prefetch IN queries issued by the batch sync / unsync paths (bound[0] is the user id).
+        const rest = bound.slice(1).map(String);
+        if (sql.includes('FROM shopping_list_items') && sql.includes('id IN')) {
+          return { results: rest.map((id) => shopping.get(id)).filter(Boolean) };
+        }
+        if (sql.includes('FROM pantry_items') && sql.includes('NOCASE IN')) {
+          const names = new Set(rest.map((n) => n.toLowerCase()));
+          return { results: [...pantry.values()].filter((r) => names.has(r.name.toLowerCase())) };
+        }
+        if (sql.includes('FROM pantry_items') && sql.includes('ingredient_id IN')) {
+          return { results: [...pantry.values()].filter((r) => r.ingredient_id && rest.includes(r.ingredient_id)) };
+        }
         return { results: [] };
       },
       async run() {
@@ -82,6 +95,10 @@ const db = {
       },
     };
   },
+  async batch(stmts: Array<{ run: () => Promise<unknown> }>) {
+    batchSizes.push(stmts.length);
+    for (const s of stmts) await s.run();
+  },
 } as unknown as D1Database;
 
 function addShopping(
@@ -108,6 +125,7 @@ function addShopping(
 beforeEach(() => {
   pantry.clear();
   shopping.clear();
+  batchSizes.length = 0;
 });
 
 describe('shopping check-off undo leaves no ghost pantry row', () => {
@@ -151,5 +169,34 @@ describe('shopping check-off undo leaves no ghost pantry row', () => {
     expect([...pantry.values()].some((r) => Number(r.quantity) <= 0)).toBe(
       false,
     );
+  });
+
+  it('syncs many items with one batch (no per-item round trips)', async () => {
+    for (let i = 0; i < 30; i++) addShopping(`s${i}`, `Item ${i}`, 1, 'pcs');
+    pantry.set('p0', pantryRow('p0', 'item 3', 2, 'pcs'));
+    const ids = Array.from({ length: 30 }, (_, i) => ({ id: `s${i}` }));
+    const result = await syncItemsToPantry(db, 'u1', ids);
+    expect(result.synced).toHaveLength(30);
+    expect(batchSizes).toEqual([60]); // 30 pantry writes + 30 shopping flag updates
+    expect(pantry.size).toBe(30); // 29 created + 1 merged into p0
+    expect(pantry.get('p0')?.quantity).toBe('3');
+
+    batchSizes.length = 0;
+    const undone = await unsyncItemsFromPantry(
+      db,
+      'u1',
+      ids.map((i) => i.id),
+    );
+    expect(undone.unsynced).toHaveLength(30);
+    expect(batchSizes).toEqual([60]);
+    expect(pantry.size).toBe(1);
+    expect(pantry.get('p0')?.quantity).toBe('2');
+  });
+
+  it('a later item in the same batch merges into the row an earlier item created', async () => {
+    addShopping('s1', 'Basil', 1, 'pcs');
+    addShopping('s2', 'basil', 2, 'pcs');
+    await syncItemsToPantry(db, 'u1', [{ id: 's1' }, { id: 's2' }]);
+    expect([...pantry.values()].map((r) => [r.name, r.quantity])).toEqual([['Basil', '3']]);
   });
 });

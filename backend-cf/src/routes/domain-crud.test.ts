@@ -95,6 +95,20 @@ function createMockDb() {
               ) ?? null
             ) as T;
           }
+          if (sql.includes('FROM shopping_list_items') && sql.includes('checked = 0')) {
+            const [userId, name, unit] = bound as [string, string, string];
+            return (
+              [...store.shopping.values()]
+                .filter(
+                  (r) =>
+                    r.user_id === userId &&
+                    r.checked === 0 &&
+                    r.name.trim().toLowerCase() === name.toLowerCase() &&
+                    (r.unit?.trim() || 'pcs').toLowerCase() === unit.toLowerCase(),
+                )
+                .sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0))[0] ?? null
+            ) as T;
+          }
           if (sql.includes('FROM shopping_list_items') && sql.includes('id = ?')) {
             const id = bound[0] as string;
             const userId = bound[1] as string;

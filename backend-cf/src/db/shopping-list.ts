@@ -1,12 +1,12 @@
 import { nowUnixSeconds } from '../lib/time';
 import {
-  deletePantryItem,
-  findByIngredientId,
-  findByNameCi,
-  mergeAddPantryItem,
+  insertPantryStatement,
+  listPantryMatching,
   quantityInPantryUnit,
-  updatePantryItem,
+  updatePantryRowStatement,
+  type PantryItemRow,
 } from './pantry';
+import { selectInChunks } from './sql-utils';
 
 export type ShoppingListItemRow = {
   id: string;
@@ -119,86 +119,6 @@ export function toShoppingListItemDto(
   return dto;
 }
 
-async function findPantryForShoppingItem(
-  db: D1Database,
-  userId: string,
-  name: string,
-  ingredientId: string | null,
-) {
-  if (ingredientId) {
-    const byIngredient = await findByIngredientId(db, userId, ingredientId);
-    if (byIngredient) return byIngredient;
-  }
-  return findByNameCi(db, userId, name);
-}
-
-async function syncPantryOnCheck(
-  db: D1Database,
-  userId: string,
-  name: string,
-  quantity: number,
-  unit: string,
-  ingredientId: string | null | undefined,
-): Promise<void> {
-  const input = {
-    name,
-    quantity,
-    unit,
-    ...(ingredientId ? { ingredient_id: ingredientId } : {}),
-  };
-  await mergeAddPantryItem(db, userId, input);
-}
-
-/**
- * Undo of syncPantryOnCheck. If the check-off created the pantry row (or merged
- * the full remaining quantity), the quantity reaches zero and the row is
- * deleted — never leave a "0 pcs" ghost. If it merged into an existing row, the
- * previous quantity is restored.
- */
-async function syncPantryOnUncheck(
-  db: D1Database,
-  userId: string,
-  name: string,
-  quantity: number,
-  unit: string,
-  ingredientId: string | null,
-): Promise<void> {
-  const pantry = await findPantryForShoppingItem(
-    db,
-    userId,
-    name,
-    ingredientId,
-  );
-  if (!pantry) return;
-
-  const available = quantityFromRow(pantry.quantity);
-  const remove = quantityInPantryUnit(quantity, unit, pantry.unit);
-  const newQty = available - remove;
-  if (newQty <= 1e-9) {
-    await deletePantryItem(db, userId, pantry.id);
-    return;
-  }
-  await updatePantryItem(db, userId, pantry.id, { quantity: newQty });
-}
-
-async function setSyncedFlag(
-  db: D1Database,
-  userId: string,
-  id: string,
-  flag: 0 | 1,
-): Promise<ShoppingListItemRow | null> {
-  const now = nowUnixSeconds();
-  await db
-    .prepare(
-      `UPDATE shopping_list_items
-       SET has_been_added_to_pantry = ?, updated_at = ?, version = COALESCE(version, 1) + 1
-       WHERE id = ? AND user_id = ?`,
-    )
-    .bind(flag, now, id, userId)
-    .run();
-  return getShoppingListItem(db, userId, id);
-}
-
 export async function listShoppingListItems(
   db: D1Database,
   userId: string,
@@ -272,24 +192,23 @@ function normalizeShoppingUnit(unit: string | null | undefined): string {
   return t ? t : 'pcs';
 }
 
-/** Unchecked row with same CI name + unit (merge target for add). */
+/** Unchecked row with same CI name + unit (merge target for add). Targeted LIMIT 1 query. */
 export async function findUncheckedByNameUnitCi(
   db: D1Database,
   userId: string,
   name: string,
   unit: string,
 ): Promise<ShoppingListItemRow | null> {
-  const rows = await listShoppingListItems(db, userId);
-  const nameKey = name.trim().toLowerCase();
-  const unitKey = normalizeShoppingUnit(unit).toLowerCase();
-  return (
-    rows.find(
-      (r) =>
-        r.checked === 0 &&
-        r.name.trim().toLowerCase() === nameKey &&
-        normalizeShoppingUnit(r.unit).toLowerCase() === unitKey,
-    ) ?? null
-  );
+  return db
+    .prepare(
+      `SELECT * FROM shopping_list_items
+       WHERE user_id = ? AND checked = 0
+         AND TRIM(name) = ? COLLATE NOCASE
+         AND COALESCE(NULLIF(TRIM(unit), ''), 'pcs') = ? COLLATE NOCASE
+       ORDER BY created_at ASC LIMIT 1`,
+    )
+    .bind(userId, name.trim(), normalizeShoppingUnit(unit))
+    .first<ShoppingListItemRow>();
 }
 
 /**
@@ -438,6 +357,147 @@ export function assertBatchSize(count: number): string | null {
   return null;
 }
 
+/** Prefetch the user's shopping rows for `ids` with chunked IN queries (superset-safe). */
+async function loadShoppingRows(
+  db: D1Database,
+  userId: string,
+  ids: string[],
+): Promise<Map<string, ShoppingListItemRow>> {
+  const wanted = new Set(ids);
+  const rows = await selectInChunks<ShoppingListItemRow>(
+    db,
+    ids,
+    (ph) => `SELECT * FROM shopping_list_items WHERE user_id = ? AND id IN (${ph})`,
+    [userId],
+  );
+  const map = new Map<string, ShoppingListItemRow>();
+  for (const row of rows) {
+    if (wanted.has(row.id) && row.user_id === userId) map.set(row.id, { ...row });
+  }
+  return map;
+}
+
+/** In-memory pantry used while a batch is planned; mirrors the rows the batch will write. */
+class PantryWorkingSet {
+  private rows: PantryItemRow[];
+
+  constructor(rows: PantryItemRow[]) {
+    this.rows = rows.map((r) => ({ ...r }));
+  }
+
+  findByNameCi(name: string): PantryItemRow | null {
+    const lower = name.toLowerCase();
+    return this.rows.find((r) => r.name.toLowerCase() === lower) ?? null;
+  }
+
+  findByIngredientId(ingredientId: string): PantryItemRow | null {
+    return this.rows.find((r) => r.ingredient_id === ingredientId) ?? null;
+  }
+
+  add(row: PantryItemRow): void {
+    this.rows.push(row);
+  }
+
+  remove(row: PantryItemRow): void {
+    const i = this.rows.indexOf(row);
+    if (i >= 0) this.rows.splice(i, 1);
+  }
+}
+
+/** Same merge-add semantics as mergeAddPantryItem, planned in memory. */
+function planPantryMergeAdd(
+  db: D1Database,
+  userId: string,
+  pantry: PantryWorkingSet,
+  input: { name: string; quantity: number; unit: string; ingredient_id?: string },
+  now: number,
+  writes: D1PreparedStatement[],
+): void {
+  const existing = pantry.findByNameCi(input.name);
+  if (!existing) {
+    const row: PantryItemRow = {
+      id: crypto.randomUUID(),
+      user_id: userId,
+      name: input.name,
+      quantity: String(input.quantity),
+      unit: input.unit,
+      notes: null,
+      ingredient_id: input.ingredient_id ?? null,
+      created_at: now,
+      updated_at: now,
+    };
+    writes.push(insertPantryStatement(db, row));
+    pantry.add(row);
+    return;
+  }
+  const existingQty = quantityFromRow(existing.quantity);
+  const hasUnit = Boolean(existing.unit?.trim());
+  const unit = hasUnit ? existing.unit : input.unit || 'pcs';
+  const addQty = hasUnit
+    ? quantityInPantryUnit(input.quantity, input.unit, existing.unit)
+    : input.quantity;
+  existing.quantity = String(existingQty + addQty);
+  existing.unit = unit;
+  existing.updated_at = now;
+  writes.push(updatePantryRowStatement(db, existing));
+}
+
+/**
+ * Undo of the check-off sync. If the check-off created the pantry row (or merged the full
+ * remaining quantity), the quantity reaches zero and the row is deleted — never leave a
+ * "0 pcs" ghost. If it merged into an existing row, the previous quantity is restored.
+ */
+function planPantryUndo(
+  db: D1Database,
+  userId: string,
+  pantry: PantryWorkingSet,
+  name: string,
+  quantity: number,
+  unit: string,
+  ingredientId: string | null,
+  now: number,
+  writes: D1PreparedStatement[],
+): void {
+  const row =
+    (ingredientId ? pantry.findByIngredientId(ingredientId) : null) ??
+    pantry.findByNameCi(name);
+  if (!row) return;
+  const available = quantityFromRow(row.quantity);
+  const remove = quantityInPantryUnit(quantity, unit, row.unit);
+  const newQty = available - remove;
+  if (newQty <= 1e-9) {
+    writes.push(
+      db.prepare(`DELETE FROM pantry_items WHERE id = ? AND user_id = ?`).bind(row.id, userId),
+    );
+    pantry.remove(row);
+    return;
+  }
+  row.quantity = String(newQty);
+  row.updated_at = now;
+  writes.push(updatePantryRowStatement(db, row));
+}
+
+function setSyncedFlagStatement(
+  db: D1Database,
+  userId: string,
+  id: string,
+  flag: 0 | 1,
+  now: number,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `UPDATE shopping_list_items
+       SET has_been_added_to_pantry = ?, updated_at = ?, version = COALESCE(version, 1) + 1
+       WHERE id = ? AND user_id = ?`,
+    )
+    .bind(flag, now, id, userId);
+}
+
+/**
+ * Batch check-off sync: prefetch shopping + pantry rows with IN queries, decide everything in
+ * memory (items are processed in order, so later items see earlier items' pantry changes),
+ * then commit all writes in a single db.batch.
+ */
 export async function syncItemsToPantry(
   db: D1Database,
   userId: string,
@@ -445,9 +505,22 @@ export async function syncItemsToPantry(
 ): Promise<SyncToPantryResult> {
   const synced: ShoppingListItemDto[] = [];
   const skipped: SyncSkip[] = [];
+  const rows = await loadShoppingRows(
+    db,
+    userId,
+    items.map((i) => i.id),
+  );
+  const pantry = new PantryWorkingSet(
+    await listPantryMatching(db, userId, {
+      names: [...rows.values()].map((r) => r.name),
+      ingredientIds: [],
+    }),
+  );
+  const writes: D1PreparedStatement[] = [];
+  const now = nowUnixSeconds();
 
   for (const item of items) {
-    const row = await getShoppingListItem(db, userId, item.id);
+    const row = rows.get(item.id);
     if (!row) {
       skipped.push({ id: item.id, reason: 'not_found' });
       continue;
@@ -474,34 +547,43 @@ export async function syncItemsToPantry(
         ? item.unit.trim()
         : (row.unit ?? 'pcs');
 
-    await syncPantryOnCheck(
+    planPantryMergeAdd(
       db,
       userId,
-      row.name,
-      quantity,
-      unit,
-      row.ingredient_id,
+      pantry,
+      {
+        name: row.name,
+        quantity,
+        unit,
+        ...(row.ingredient_id ? { ingredient_id: row.ingredient_id } : {}),
+      },
+      now,
+      writes,
     );
 
     // Persist optional qty/unit overrides on the shopping row so unsync matches.
     if (item.quantity !== undefined || item.unit !== undefined) {
-      const now = nowUnixSeconds();
-      await db
-        .prepare(
-          `UPDATE shopping_list_items
-           SET quantity = ?, unit = ?, has_been_added_to_pantry = 1, updated_at = ?, version = COALESCE(version, 1) + 1
-           WHERE id = ? AND user_id = ?`,
-        )
-        .bind(String(quantity), unit, now, item.id, userId)
-        .run();
+      writes.push(
+        db
+          .prepare(
+            `UPDATE shopping_list_items
+             SET quantity = ?, unit = ?, has_been_added_to_pantry = 1, updated_at = ?, version = COALESCE(version, 1) + 1
+             WHERE id = ? AND user_id = ?`,
+          )
+          .bind(String(quantity), unit, now, item.id, userId),
+      );
+      row.quantity = String(quantity);
+      row.unit = unit;
     } else {
-      await setSyncedFlag(db, userId, item.id, 1);
+      writes.push(setSyncedFlagStatement(db, userId, item.id, 1, now));
     }
-
-    const updated = await getShoppingListItem(db, userId, item.id);
-    if (updated) synced.push(toShoppingListItemDto(updated));
+    row.has_been_added_to_pantry = 1;
+    row.updated_at = now;
+    row.version = (row.version ?? 1) + 1;
+    synced.push(toShoppingListItemDto(row));
   }
 
+  if (writes.length > 0) await db.batch(writes);
   return { synced, skipped };
 }
 
@@ -512,9 +594,19 @@ export async function unsyncItemsFromPantry(
 ): Promise<UnsyncFromPantryResult> {
   const unsynced: ShoppingListItemDto[] = [];
   const skipped: SyncSkip[] = [];
+  const rows = await loadShoppingRows(db, userId, itemIds);
+  const syncedRows = [...rows.values()].filter(flagFromRow);
+  const pantry = new PantryWorkingSet(
+    await listPantryMatching(db, userId, {
+      names: syncedRows.map((r) => r.name),
+      ingredientIds: syncedRows.flatMap((r) => (r.ingredient_id ? [r.ingredient_id] : [])),
+    }),
+  );
+  const writes: D1PreparedStatement[] = [];
+  const now = nowUnixSeconds();
 
   for (const id of itemIds) {
-    const row = await getShoppingListItem(db, userId, id);
+    const row = rows.get(id);
     if (!row) {
       skipped.push({ id, reason: 'not_found' });
       continue;
@@ -524,18 +616,24 @@ export async function unsyncItemsFromPantry(
       continue;
     }
 
-    await syncPantryOnUncheck(
+    planPantryUndo(
       db,
       userId,
+      pantry,
       row.name,
       quantityFromRow(row.quantity),
       row.unit ?? 'pcs',
       row.ingredient_id,
+      now,
+      writes,
     );
-    await setSyncedFlag(db, userId, id, 0);
-    const updated = await getShoppingListItem(db, userId, id);
-    if (updated) unsynced.push(toShoppingListItemDto(updated));
+    writes.push(setSyncedFlagStatement(db, userId, id, 0, now));
+    row.has_been_added_to_pantry = 0;
+    row.updated_at = now;
+    row.version = (row.version ?? 1) + 1;
+    unsynced.push(toShoppingListItemDto(row));
   }
 
+  if (writes.length > 0) await db.batch(writes);
   return { unsynced, skipped };
 }

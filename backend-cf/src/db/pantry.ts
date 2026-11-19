@@ -1,5 +1,6 @@
 import { nowUnixSeconds } from '../lib/time';
 import { canonicalUnit, namesMatch, standardConvert } from './units';
+import { selectInChunks } from './sql-utils';
 
 export type PantryItemRow = {
   id: string;
@@ -74,6 +75,83 @@ export async function listPantryItems(
     .bind(userId)
     .all<PantryItemRow>();
   return result.results ?? [];
+}
+
+/** INSERT statement for a fully built row (same column order as createPantryItem). */
+export function insertPantryStatement(
+  db: D1Database,
+  row: PantryItemRow,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO pantry_items
+        (id, user_id, name, quantity, unit, notes, ingredient_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      row.id,
+      row.user_id,
+      row.name,
+      row.quantity ?? '0',
+      row.unit ?? 'pcs',
+      row.notes,
+      row.ingredient_id,
+      row.created_at,
+      row.updated_at,
+    );
+}
+
+/** Full-row UPDATE statement (same shape as updatePantryItem). */
+export function updatePantryRowStatement(
+  db: D1Database,
+  row: PantryItemRow,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `UPDATE pantry_items
+       SET name = ?, quantity = ?, unit = ?, notes = ?, ingredient_id = ?, updated_at = ?
+       WHERE id = ? AND user_id = ?`,
+    )
+    .bind(
+      row.name,
+      row.quantity ?? '0',
+      row.unit ?? 'pcs',
+      row.notes,
+      row.ingredient_id,
+      row.updated_at,
+      row.id,
+      row.user_id,
+    );
+}
+
+/**
+ * Pantry rows matching any of the given names (case-insensitive) or ingredient ids, in
+ * created_at order, using chunked IN queries instead of one lookup per item.
+ */
+export async function listPantryMatching(
+  db: D1Database,
+  userId: string,
+  match: { names: string[]; ingredientIds: string[] },
+): Promise<PantryItemRow[]> {
+  const [byName, byIngredient] = await Promise.all([
+    selectInChunks<PantryItemRow>(
+      db,
+      match.names.map((n) => n.trim()).filter(Boolean),
+      (ph) => `SELECT * FROM pantry_items WHERE user_id = ? AND name COLLATE NOCASE IN (${ph})`,
+      [userId],
+    ),
+    selectInChunks<PantryItemRow>(
+      db,
+      match.ingredientIds,
+      (ph) => `SELECT * FROM pantry_items WHERE user_id = ? AND ingredient_id IN (${ph})`,
+      [userId],
+    ),
+  ]);
+  const byId = new Map<string, PantryItemRow>();
+  for (const row of [...byName, ...byIngredient]) byId.set(row.id, row);
+  return [...byId.values()].sort(
+    (a, b) => (a.created_at ?? 0) - (b.created_at ?? 0),
+  );
 }
 
 export async function getPantryItem(
