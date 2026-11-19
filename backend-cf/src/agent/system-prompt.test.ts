@@ -258,6 +258,19 @@ describe('UI glossary', () => {
     expect(p).toContain('Shopping list = 「購物清單」');
     expect(p).toContain('Recipes = 「食譜」');
   });
+  it('names the reply language and pins UI terms for es / fr / de / ja', () => {
+    const cases = [
+      ['es', 'Spanish', 'Pantry = 「Despensa」'],
+      ['fr', 'French', 'Shopping list = 「Liste de courses」'],
+      ['de', 'German', 'Calendar = 「Kalender」'],
+      ['ja', 'Japanese', 'Recipes = 「レシピ」'],
+    ] as const;
+    for (const [language, name, term] of cases) {
+      const p = buildCookingAssistantSystemPrompt({ todayLocalDate: '2026-10-11', language });
+      expect(p).toContain(`Reply language: ${name}.`);
+      expect(p).toContain(term);
+    }
+  });
   it('en prompt uses English UI terms', () => {
     const p = buildCookingAssistantSystemPrompt({ todayLocalDate: '2026-10-11', language: 'en' });
     expect(p).toContain('Calendar = 「Calendar」');

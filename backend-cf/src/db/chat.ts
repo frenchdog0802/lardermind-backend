@@ -1,3 +1,4 @@
+import type { ChatLanguage } from '../agent/language';
 import { nowUnixSeconds } from '../lib/time';
 
 /** Stored default session title; also the auto-title sentinel. */
@@ -41,7 +42,7 @@ export type PendingInterrupt = {
   toolCalls: PendingToolCall[];
   messages: Array<Record<string, unknown>>;
   /** Reply language of the turn that created it ('zh' | 'en'). Missing on older rows. */
-  language?: 'zh' | 'en';
+  language?: ChatLanguage;
 };
 
 /** Pending approvals older than this are treated as rejected. */
