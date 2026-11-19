@@ -5,6 +5,7 @@ export const MUTATING_TOOLS = new Set([
   'updatePantryItems',
   'removePantryItems',
   'addItemsToShoppingList',
+  'addMealPlanShortagesToShoppingList',
   'createRecipe',
   'updateRecipe',
   'addRecipeToMenu',
@@ -37,10 +38,12 @@ function updateItemSummary(item: unknown): string {
       : 'set';
   if (mode === 'delta' && typeof obj.delta === 'number') {
     const sign = obj.delta > 0 ? '+' : '';
-    return `${label} ${sign}${obj.delta}`;
+    const unit = typeof obj.unit === 'string' ? obj.unit.trim() : '';
+    return `${label} ${sign}${obj.delta}${unit ? ` ${unit}` : ''}`;
   }
   if (typeof obj.quantity === 'number') {
-    return `${label} → ${obj.quantity}`;
+    const unit = typeof obj.unit === 'string' ? obj.unit.trim() : '';
+    return `${label} → ${obj.quantity}${unit ? ` ${unit}` : ''}`;
   }
   return label;
 }
@@ -56,6 +59,8 @@ export function argsSummary(
       const names = items.map(itemNameLabel).filter(Boolean);
       return names.length ? names.join(', ') : `${items.length} item(s)`;
     }
+    case 'addMealPlanShortagesToShoppingList':
+      return `missing items ${String(args.from ?? '?')}…${String(args.to ?? '?')}`;
     case 'updatePantryItems': {
       const items = Array.isArray(args.items) ? args.items : [];
       const parts = items.map(updateItemSummary).filter(Boolean);

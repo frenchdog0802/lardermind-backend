@@ -1,4 +1,10 @@
 import type { LlmToolDefinition } from '../../lib/llm-chat';
+import { APP_UNITS } from '../../db/units';
+
+/** The only units the app understands; tools map anything else onto these. */
+const UNIT_ENUM = [...APP_UNITS];
+const UNIT_RULE =
+  'Must be one of the app units: g, kg, oz, lb, ml, l, tsp, tbsp, cup, pcs, clove, can, slice, stalk, bunch. Never invent units (no bottle, carton, loaf, pack). Liquids (milk, oil) use ml or l; bread/eggs/fruit use pcs (bread may use slice); dry goods use g or kg.';
 
 export const COOKING_TOOLS: LlmToolDefinition[] = [
   {
@@ -89,7 +95,8 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
                 quantity: { type: 'number' },
                 unit: {
                   type: 'string',
-                  description: 'Unit in the user message language (e.g. pack, g).',
+                  enum: UNIT_ENUM,
+                  description: UNIT_RULE,
                 },
               },
               required: ['name', 'quantity'],
@@ -131,7 +138,11 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
                   description:
                     'set = absolute quantity; delta = add delta to current. Default: delta if delta provided, else set.',
                 },
-                unit: { type: 'string' },
+                unit: {
+                  type: 'string',
+                  enum: UNIT_ENUM,
+                  description: `Unit of the quantity. ${UNIT_RULE}`,
+                },
               },
             },
           },
@@ -185,7 +196,8 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
                 quantity: { type: 'number' },
                 unit: {
                   type: 'string',
-                  description: 'Unit in the user message language (e.g. pack, g).',
+                  enum: UNIT_ENUM,
+                  description: UNIT_RULE,
                 },
               },
               required: ['name', 'quantity'],
@@ -221,8 +233,8 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
                 quantity: { type: 'number' },
                 unit: {
                   type: 'string',
-                  description:
-                    'Exact unit from the recipe text (cup, tbsp, g, …). Do not convert cups/tbsp to ml.',
+                  enum: UNIT_ENUM,
+                  description: `Unit from the recipe text (cup and tbsp stay cup/tbsp; do not convert to ml). ${UNIT_RULE}`,
                 },
               },
               required: ['name', 'unit'],
@@ -260,8 +272,8 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
                 quantity: { type: 'number' },
                 unit: {
                   type: 'string',
-                  description:
-                    'Exact unit from the recipe text. Do not convert cups/tbsp to ml.',
+                  enum: UNIT_ENUM,
+                  description: `Unit from the recipe text (do not convert cups/tbsp to ml). ${UNIT_RULE}`,
                 },
               },
               required: ['name', 'unit'],
@@ -336,6 +348,23 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
       name: 'getMealPlanAvailability',
       description:
         'Read-only: week-allocate pantry against planned meals. Returns meals[] each with serving_date, meal_name, meal_type, status, and that meal\'s shortages — narrate per-meal first. weekShortages/shoppingHints are a deduped aggregate for an optional shopping offer only. Does not write pantry.',
+      parameters: {
+        type: 'object',
+        properties: {
+          from: { type: 'string', description: 'YYYY-MM-DD' },
+          to: { type: 'string', description: 'YYYY-MM-DD' },
+        },
+        required: ['from', 'to'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'addMealPlanShortagesToShoppingList',
+      description:
+        'Add ONLY the missing ingredients for planned meals in a date range to the shopping list (requires approval). The server computes needed minus what the pantry already has (unit- and name-aware) — the same numbers the Calendar shows — and skips what is already on the list. Prefer this over addItemsToShoppingList for meal-plan shopping; never compute quantities yourself.',
       parameters: {
         type: 'object',
         properties: {

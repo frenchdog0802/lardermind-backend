@@ -98,7 +98,7 @@ describe('shortagesToShoppingItems', () => {
         { name: '  ', needed: 1, available: 0, unit: 'pcs' },
         { name: 'Egg', needed: 0, available: 0, unit: 'pcs' },
       ]),
-    ).toEqual([{ name: '排骨', quantity: 3, unit: '包' }]);
+    ).toEqual([{ name: '排骨', quantity: 3, unit: 'pcs' }]);
   });
 });
 

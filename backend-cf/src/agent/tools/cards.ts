@@ -5,6 +5,7 @@ export const TOOL_CARD_TYPES: Record<string, string> = {
   updatePantryItems: 'pantry_updated',
   removePantryItems: 'pantry_updated',
   addItemsToShoppingList: 'shopping_list_updated',
+  addMealPlanShortagesToShoppingList: 'shopping_list_updated',
   createRecipe: 'recipe_created',
   updateRecipe: 'recipe_updated',
   addRecipeToMenu: 'meal_plan_updated',

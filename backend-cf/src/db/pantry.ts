@@ -1,4 +1,5 @@
 import { nowUnixSeconds } from '../lib/time';
+import { namesMatch } from './units';
 
 export type PantryItemRow = {
   id: string;
@@ -110,6 +111,18 @@ export async function findByNameCi(
     )
     .bind(userId, name)
     .first<PantryItemRow>();
+}
+
+/** Exact CI name match first, then case / plural / filler-adjective variants ("Eggs" ~ "egg"). */
+export async function findPantryByNameLoose(
+  db: D1Database,
+  userId: string,
+  name: string,
+): Promise<PantryItemRow | null> {
+  const exact = await findByNameCi(db, userId, name);
+  if (exact) return exact;
+  const rows = await listPantryItems(db, userId);
+  return rows.find((r) => namesMatch(r.name, name)) ?? null;
 }
 
 export async function createPantryItem(
