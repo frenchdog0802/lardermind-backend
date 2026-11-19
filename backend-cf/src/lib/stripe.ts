@@ -50,12 +50,14 @@ export function frontendUrl(env: Env): string {
 
 /**
  * Checkout return URLs. The SPA reads `?subscription=success|cancelled` on `/`,
- * shows a notice on the Plan screen and refreshes subscription status.
+ * shows a notice on the Plan screen, confirms the session server-side and refreshes
+ * subscription status.
  */
 export function checkoutReturnUrls(env: Env): { successUrl: string; cancelUrl: string } {
   const base = frontendUrl(env);
   return {
-    successUrl: `${base}/?subscription=success`,
+    // Stripe substitutes {CHECKOUT_SESSION_ID}; the SPA sends it to /api/subscription/confirm.
+    successUrl: `${base}/?subscription=success&session_id={CHECKOUT_SESSION_ID}`,
     cancelUrl: `${base}/?subscription=cancelled`,
   };
 }

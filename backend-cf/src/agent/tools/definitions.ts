@@ -3,6 +3,11 @@ import { APP_UNITS } from '../../db/units';
 
 /** The only units the app understands; tools map anything else onto these. */
 const UNIT_ENUM = [...APP_UNITS];
+/** YYYY-MM-DD (shape only; written without backslashes so it survives JSON tooling). */
+export const DATE_PATTERN = '^[0-9]{4}-[0-9]{2}-[0-9]{2}$';
+export const MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'];
+/** planMeals cap per call (the executor also truncates to this as a safety net). */
+export const PLAN_MEALS_MAX_ENTRIES = 28;
 const UNIT_RULE =
   'Must be one of the app units: g, kg, oz, lb, ml, l, tsp, tbsp, cup, pcs, clove, can, slice, stalk, bunch. Never invent units (no bottle, carton, loaf, pack). Liquids (milk, oil) use ml or l; bread/eggs/fruit use pcs (bread may use slice); dry goods use g or kg.';
 
@@ -70,7 +75,8 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     type: 'function',
     function: {
       name: 'suggestMealsFromPantry',
-      description: 'Suggest saved recipes that match pantry ingredients.',
+      description:
+        'Suggest saved recipes that match pantry ingredients. Each suggestion has cookStatus (cookable | conditionally_cookable | uncookable), missingMains, conditionalSeasonings. actions with action_required define_unit mean a unit card is shown to the user; call this tool again after they define the conversion.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
@@ -85,14 +91,16 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
         properties: {
           items: {
             type: 'array',
+            minItems: 1,
             items: {
               type: 'object',
               properties: {
                 name: {
                   type: 'string',
+                  minLength: 1,
                   description: 'Item name in the user message language.',
                 },
-                quantity: { type: 'number' },
+                quantity: { type: 'number', exclusiveMinimum: 0 },
                 unit: {
                   type: 'string',
                   enum: UNIT_ENUM,
@@ -180,20 +188,22 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     function: {
       name: 'addItemsToShoppingList',
       description:
-        'Add items to the shopping list (requires approval). Use name/unit in the same language as the user message.',
+        'Add ad-hoc items the user names to the shopping list (requires approval). For missing meal-plan ingredients use addMealPlanShortagesToShoppingList instead. Use name/unit in the same language as the user message.',
       parameters: {
         type: 'object',
         properties: {
           items: {
             type: 'array',
+            minItems: 1,
             items: {
               type: 'object',
               properties: {
                 name: {
                   type: 'string',
+                  minLength: 1,
                   description: 'Item name in the user message language.',
                 },
-                quantity: { type: 'number' },
+                quantity: { type: 'number', exclusiveMinimum: 0 },
                 unit: {
                   type: 'string',
                   enum: UNIT_ENUM,
@@ -217,7 +227,7 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
       parameters: {
         type: 'object',
         properties: {
-          meal_name: { type: 'string' },
+          meal_name: { type: 'string', minLength: 1 },
           instructions: {
             oneOf: [
               { type: 'string' },
@@ -289,18 +299,23 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     type: 'function',
     function: {
       name: 'addRecipeToMenu',
-      description: 'Schedule a recipe on the meal plan (requires approval).',
+      description:
+        'Schedule ONE dish on the meal plan (requires approval). Pass recipe_id and/or meal_name (at least one; the server takes the name from the recipe when meal_name is empty and rejects a nameless meal). For several dishes or days use planMeals.',
       parameters: {
         type: 'object',
         properties: {
           recipe_id: { type: 'string' },
-          meal_name: { type: 'string' },
+          meal_name: {
+            type: 'string',
+            description: 'Dish name. Required unless recipe_id is given.',
+          },
           meal_type: {
             type: 'string',
-            enum: ['breakfast', 'lunch', 'dinner', 'snack'],
+            enum: MEAL_TYPES,
           },
           serving_date: {
             type: 'string',
+            pattern: DATE_PATTERN,
             description:
               'YYYY-MM-DD. For 今天/today use the local calendar date from the system prompt.',
           },
@@ -314,22 +329,29 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     function: {
       name: 'planMeals',
       description:
-        'Schedule multiple meals on the calendar (requires approval). Prefer over repeated addRecipeToMenu for multi-day plans. Does not deduct pantry; soft-reserves only. Each entry becomes its own calendar row: a day with a main AND a side needs TWO entries with the same serving_date + meal_type. Send exactly the dishes you proposed, day by day — never rotate, drop or swap dishes. A side dish with no saved recipe may be sent with just meal_name (no recipe_id); it is then not pantry-checked.',
+        'Schedule multiple dishes on the calendar (requires approval). Prefer over repeated addRecipeToMenu for multi-day plans. A slot may hold several dishes: add one entry per dish (main, side, soup) with the same serving_date and meal_type; never merge dishes into one name. Include every dish of the plan the user confirmed (max 28 entries per call). Result: created (saved rows), createdCount, requested, byDate {date: {meal_type: names}}, existingInSlot (meals already in those slots before this call), errors, truncated — report only what is in created/byDate and name anything not saved. Does not deduct pantry; soft-reserves only.',
       parameters: {
         type: 'object',
         properties: {
           meals: {
             type: 'array',
+            minItems: 1,
+            maxItems: PLAN_MEALS_MAX_ENTRIES,
             items: {
               type: 'object',
               properties: {
-                meal_name: { type: 'string' },
+                meal_name: {
+                  type: 'string',
+                  minLength: 1,
+                  description: 'One dish (main, side, or soup) — never several dishes merged and never alternatives (no "or").',
+                },
                 meal_type: {
                   type: 'string',
-                  enum: ['breakfast', 'lunch', 'dinner', 'snack'],
+                  enum: MEAL_TYPES,
                 },
                 serving_date: {
                   type: 'string',
+                  pattern: DATE_PATTERN,
                   description: 'YYYY-MM-DD',
                 },
                 recipe_id: { type: 'string' },
@@ -347,12 +369,12 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     function: {
       name: 'getMealPlanAvailability',
       description:
-        'Read-only: week-allocate pantry against planned meals. Returns meals[] each with serving_date, meal_name, meal_type, status, and that meal\'s shortages — narrate per-meal first. weekShortages/shoppingHints are a deduped aggregate for an optional shopping offer only. Does not write pantry.',
+        "Read-only: week-allocate pantry against planned meals. Returns meals[] each with serving_date, meal_name, meal_type, status (ok | short | unknown), and that meal's shortages. Narrate per meal first: for each short entry give its serving_date, meal_name and only its own shortages. Never put meal A's shortages under meal B's heading, and do not invent doubt that a list belongs to another dish. status unknown = no usable recipe; say it cannot be scored, do not fabricate ingredients. Shortage reason unit_mismatch = ask how to convert. weekShortages/shoppingHints are a deduped aggregate for an optional shopping offer only, after the per-meal breakdown (or when the user asks for one combined cart); to add them use addMealPlanShortagesToShoppingList. Does not write pantry.",
       parameters: {
         type: 'object',
         properties: {
-          from: { type: 'string', description: 'YYYY-MM-DD' },
-          to: { type: 'string', description: 'YYYY-MM-DD' },
+          from: { type: 'string', pattern: DATE_PATTERN, description: 'YYYY-MM-DD' },
+          to: { type: 'string', pattern: DATE_PATTERN, description: 'YYYY-MM-DD' },
         },
         required: ['from', 'to'],
         additionalProperties: false,
@@ -368,8 +390,8 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
       parameters: {
         type: 'object',
         properties: {
-          from: { type: 'string', description: 'YYYY-MM-DD' },
-          to: { type: 'string', description: 'YYYY-MM-DD' },
+          from: { type: 'string', pattern: DATE_PATTERN, description: 'YYYY-MM-DD' },
+          to: { type: 'string', pattern: DATE_PATTERN, description: 'YYYY-MM-DD' },
         },
         required: ['from', 'to'],
         additionalProperties: false,

@@ -2,13 +2,14 @@ import { Hono } from 'hono';
 import { fail, ok } from '../lib/api-response';
 import type { Env } from '../env';
 import type { AuthVariables } from '../middleware/auth';
+import { ErrorCodes } from '../lib/error-codes';
 import { requireAuth, requireNonGuest } from '../middleware/auth';
 import {
   computeWeekAvailability,
   confirmMealPlan,
   createMealPlan,
-  EmptyMealNameError,
   deleteMealPlan,
+  MealPlanValidationError,
   getMealPlan,
   listMealPlans,
   listPendingConfirmMealPlans,
@@ -163,9 +164,11 @@ mealPlanRoutes.post('/api/meal-plan', async (c) => {
   try {
     const row = await createMealPlan(c.env.DB, userId, parsed.value);
     return c.json(ok(toMealPlanDto(row)), 201);
-  } catch (e) {
-    if (e instanceof EmptyMealNameError) return c.json(fail(e.message), 400);
-    throw e;
+  } catch (error) {
+    if (error instanceof MealPlanValidationError) {
+      return c.json(fail(error.message, ErrorCodes.VALIDATION_ERROR), 400);
+    }
+    throw error;
   }
 });
 
@@ -187,19 +190,22 @@ mealPlanRoutes.put('/api/meal-plan/:id', async (c) => {
   const parsed = parsePatchInput(body);
   if (!parsed.ok) return c.json(fail(parsed.message), 400);
 
+  let updated;
   try {
-    const updated = await updateMealPlan(
+    updated = await updateMealPlan(
       c.env.DB,
       userId,
       c.req.param('id'),
       parsed.value,
     );
-    if (!updated) return c.json(fail('Not found'), 404);
-    return c.json(ok(toMealPlanDto(updated)));
-  } catch (e) {
-    if (e instanceof EmptyMealNameError) return c.json(fail(e.message), 400);
-    throw e;
+  } catch (error) {
+    if (error instanceof MealPlanValidationError) {
+      return c.json(fail(error.message, ErrorCodes.VALIDATION_ERROR), 400);
+    }
+    throw error;
   }
+  if (!updated) return c.json(fail('Not found'), 404);
+  return c.json(ok(toMealPlanDto(updated)));
 });
 
 mealPlanRoutes.delete('/api/meal-plan/:id', async (c) => {

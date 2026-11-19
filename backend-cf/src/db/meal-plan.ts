@@ -639,32 +639,45 @@ export async function getMealPlan(
     .first<MealPlanRow>();
 }
 
-export class EmptyMealNameError extends Error {
-  constructor() {
-    super('meal_name is required (or a recipe_id that resolves to a recipe)');
-    this.name = 'EmptyMealNameError';
+/** A meal-plan write that would leave the row without a usable name. */
+export class MealPlanValidationError extends Error {
+  readonly code = 'validation_error';
+  constructor(message: string) {
+    super(message);
+    this.name = 'MealPlanValidationError';
   }
 }
 
+export const MEAL_NAME_REQUIRED_MESSAGE =
+  'meal_name is required (or pass the recipe_id of one of your recipes)';
+
 /**
- * A plan row must never be saved with a blank name (it renders as a hidden "ghost"
- * entry yet still counts toward shortages). Use the given name, else the linked
- * recipe's name; throw when neither exists.
+ * Never store a nameless meal plan: when the given name is empty/whitespace,
+ * take the name of the user's own recipe (user-scoped lookup). Throws
+ * MealPlanValidationError when no name can be resolved.
  */
-async function resolveMealName(
+export async function resolveMealPlanName(
   db: D1Database,
   userId: string,
-  name: string | undefined | null,
-  recipeId: string | undefined | null,
+  mealName: string | null | undefined,
+  recipeId: string | null | undefined,
 ): Promise<string> {
-  const trimmed = (name ?? '').trim();
-  if (trimmed) return trimmed;
-  if (recipeId) {
-    const recipe = await getRecipe(db, userId, recipeId);
+  if (typeof mealName === 'string' && mealName.trim()) return mealName;
+  const rid = typeof recipeId === 'string' ? recipeId.trim() : '';
+  if (rid) {
+    const recipe = await getRecipe(db, userId, rid);
     const fromRecipe = recipe?.meal_name?.trim();
     if (fromRecipe) return fromRecipe;
   }
   throw new EmptyMealNameError();
+}
+
+/** Kept for callers/tests that match on the specific empty-name failure. */
+export class EmptyMealNameError extends MealPlanValidationError {
+  constructor() {
+    super(MEAL_NAME_REQUIRED_MESSAGE);
+    this.name = 'EmptyMealNameError';
+  }
 }
 
 export async function createMealPlan(
@@ -672,7 +685,7 @@ export async function createMealPlan(
   userId: string,
   input: MealPlanInput,
 ): Promise<MealPlanRow> {
-  const mealName = await resolveMealName(
+  const mealName = await resolveMealPlanName(
     db,
     userId,
     input.meal_name,
@@ -720,18 +733,16 @@ export async function updateMealPlan(
     patch.recipe_id !== undefined
       ? (patch.recipe_id ?? null)
       : existing.recipe_id;
+  // An explicit (blank) meal_name is resolved from the recipe or rejected. A legacy row that is
+  // already blank and not being renamed is healed from its recipe when possible, but never
+  // blocks unrelated edits (cancel / confirm / move) on old data.
   let mealName: string;
-  if (patch.meal_name !== undefined || existing.meal_name.trim()) {
-    mealName = await resolveMealName(
-      db,
-      userId,
-      patch.meal_name !== undefined ? patch.meal_name : existing.meal_name,
-      recipeId,
-    );
+  if (patch.meal_name !== undefined) {
+    mealName = await resolveMealPlanName(db, userId, patch.meal_name, recipeId);
+  } else if (existing.meal_name.trim()) {
+    mealName = existing.meal_name;
   } else {
-    // Legacy blank row not being renamed: heal from the recipe if possible, but
-    // never block unrelated edits (cancel / confirm / move) on old data.
-    mealName = await resolveMealName(db, userId, '', recipeId).catch(
+    mealName = await resolveMealPlanName(db, userId, '', recipeId).catch(
       () => existing.meal_name,
     );
   }

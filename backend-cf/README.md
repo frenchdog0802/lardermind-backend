@@ -167,6 +167,8 @@ Feature: [docs/features/frontend-cf-pages.md](../docs/features/frontend-cf-pages
 - First-time Checkout sets `subscription_data.trial_period_days = 7` in code (not Dashboard product trial).
 - Webhook URL: `https://api.lardermind.com/api/subscription/webhook` (local: Stripe CLI → `localhost:8787`).
 - Events: `checkout.session.completed`, `customer.subscription.created|updated|deleted`, `invoice.paid`, `invoice.payment_failed`.
+- Checkout success URL carries `session_id={CHECKOUT_SESSION_ID}`; the SPA calls `POST /api/subscription/confirm` which retrieves the session server-side and activates Pro (also for $0 trials: `status=complete`, `payment_status=no_payment_required`). Webhooks remain the source for renewals/cancellations.
+- Staging (`--env staging`) has its own `STRIPE_WEBHOOK_SECRET` (the `whsec_` of the *staging* endpoint `https://<staging-api>/api/subscription/webhook`, test mode) and needs `STRIPE_PRICE_MONTHLY` / `STRIPE_PRICE_YEARLY` (test-mode price ids); `[vars]` is not inherited by `[env.staging]`.
 - Customer Portal: enable cancel, payment method update, and both prices for plan switching.
 - Local CLI: `stripe listen --forward-to localhost:8787/api/subscription/webhook` then put the printed `whsec_…` in `.dev.vars`.
 - Entitlement: D1 `subscriptions`; `isPro` for `active` / `trialing` / `past_due`.

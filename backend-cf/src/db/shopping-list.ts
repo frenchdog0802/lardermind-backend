@@ -7,6 +7,7 @@ import {
   type PantryItemRow,
 } from './pantry';
 import { selectInChunks } from './sql-utils';
+import { standardConvert } from './units';
 
 export type ShoppingListItemRow = {
   id: string;
@@ -221,12 +222,32 @@ export async function mergeAddShoppingListItem(
   input: ShoppingListItemInput,
 ): Promise<{ item: ShoppingListItemRow; merged: boolean }> {
   const unit = normalizeShoppingUnit(input.unit);
-  const existing = await findUncheckedByNameUnitCi(
-    db,
-    userId,
-    input.name,
-    unit,
-  );
+  let existing = await findUncheckedByNameUnitCi(db, userId, input.name, unit);
+  let addQty = input.quantity;
+  if (!existing) {
+    // Same name, different but convertible unit (e.g. 22.5 g + 1 kg): merge
+    // additively in the existing row's unit. Incompatible units stay separate.
+    const { results } = await db
+      .prepare(
+        `SELECT * FROM shopping_list_items
+         WHERE user_id = ? AND checked = 0 AND name = ? COLLATE NOCASE
+         ORDER BY created_at ASC`,
+      )
+      .bind(userId, input.name.trim())
+      .all<ShoppingListItemRow>();
+    for (const row of results ?? []) {
+      const converted = standardConvert(
+        input.quantity,
+        unit,
+        normalizeShoppingUnit(row.unit),
+      );
+      if (converted !== null) {
+        existing = row;
+        addQty = converted;
+        break;
+      }
+    }
+  }
   if (!existing) {
     const item = await createShoppingListItem(db, userId, { ...input, unit });
     return { item, merged: false };
@@ -234,8 +255,8 @@ export async function mergeAddShoppingListItem(
 
   const existingQty = quantityFromRow(existing.quantity);
   const updated = await updateShoppingListItem(db, userId, existing.id, {
-    quantity: existingQty + input.quantity,
-    unit,
+    quantity: Math.round((existingQty + addQty) * 10000) / 10000,
+    unit: normalizeShoppingUnit(existing.unit),
   });
   if (!updated) {
     throw new Error('Failed to merge shopping list item');

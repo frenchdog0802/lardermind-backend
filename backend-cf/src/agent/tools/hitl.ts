@@ -1,4 +1,5 @@
 import type { ParsedToolCall } from '../../lib/llm-chat';
+import { DEFAULT_CHAT_LANGUAGE, t, type ChatLanguage } from '../language';
 
 export const MUTATING_TOOLS = new Set([
   'addPantryItems',
@@ -59,64 +60,113 @@ function updateItemSummary(item: unknown): string {
   return label;
 }
 
+/** Dish names shown on a planMeals approval card before "+N more". */
+export const PLAN_SUMMARY_MAX_DISHES = 12;
+const PLAN_SUMMARY_NAME_MAX = 40;
+
+type PlanEntry = { date: string; type: string; name: string };
+
+function planEntries(args: Record<string, unknown>): PlanEntry[] {
+  const meals = Array.isArray(args.meals) ? args.meals : [];
+  return meals.map((m) => {
+    const obj = m && typeof m === 'object' ? (m as Record<string, unknown>) : {};
+    const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+    let name = str(obj.meal_name) || str(obj.recipe_id) || '?';
+    if (name.length > PLAN_SUMMARY_NAME_MAX) {
+      name = `${name.slice(0, PLAN_SUMMARY_NAME_MAX - 1)}…`;
+    }
+    return { date: str(obj.serving_date), type: str(obj.meal_type), name };
+  });
+}
+
+/**
+ * "10 meals (2026-11-20…2026-11-24): 2026-11-20 Braised pork, Garlic spinach; …"
+ * Lists the proposed date → dish names so the user approves what will
+ * actually be written (capped at PLAN_SUMMARY_MAX_DISHES names, then "+N more").
+ */
+function planMealsSummary(
+  args: Record<string, unknown>,
+  language: ChatLanguage,
+): string {
+  const entries = planEntries(args);
+  const dates = entries.map((e) => e.date).filter(Boolean).sort();
+  const span =
+    dates.length > 0
+      ? `${dates[0]}${dates.length > 1 && dates[dates.length - 1] !== dates[0] ? `…${dates[dates.length - 1]}` : ''}`
+      : '?';
+  const header = `${entries.length} ${t('meals', language)} (${span})`;
+  if (entries.length === 0) return header;
+
+  const mixedTypes = new Set(entries.map((e) => e.type)).size > 1;
+  const ordered = entries
+    .map((e, index) => ({ ...e, index }))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.index - b.index);
+  const shown = ordered.slice(0, PLAN_SUMMARY_MAX_DISHES);
+  const byDate = new Map<string, Map<string, string[]>>();
+  for (const e of shown) {
+    const day = byDate.get(e.date) ?? new Map<string, string[]>();
+    byDate.set(e.date, day);
+    const key = mixedTypes ? e.type : '';
+    day.set(key, [...(day.get(key) ?? []), e.name]);
+  }
+  const parts = [...byDate.entries()].map(([date, types]) => {
+    const slots = [...types.entries()].map(([type, names]) =>
+      type ? `${type}: ${names.join(', ')}` : names.join(', '),
+    );
+    return `${date || '?'} ${slots.join(' / ')}`;
+  });
+  const rest = entries.length - shown.length;
+  return `${header}: ${parts.join('; ')}${rest > 0 ? ` +${rest} ${t('more', language)}` : ''}`;
+}
+
 export function argsSummary(
   name: string,
   args: Record<string, unknown>,
+  language: ChatLanguage = DEFAULT_CHAT_LANGUAGE,
 ): string {
   switch (name) {
     case 'addPantryItems':
     case 'addItemsToShoppingList': {
       const items = Array.isArray(args.items) ? args.items : [];
       const names = items.map(itemQtyLabel).filter(Boolean);
-      return names.length ? names.join(', ') : `${items.length} item(s)`;
+      return names.length ? names.join(', ') : `${items.length} ${t('items', language)}`;
     }
     case 'addMealPlanShortagesToShoppingList':
-      return `missing ingredients, ${String(args.from ?? '?')} – ${String(args.to ?? '?')}`;
+      return `${t('missingIngredients', language)}, ${String(args.from ?? '?')} – ${String(args.to ?? '?')}`;
     case 'updatePantryItems': {
       const items = Array.isArray(args.items) ? args.items : [];
       const parts = items.map(updateItemSummary).filter(Boolean);
-      return parts.length ? parts.join(', ') : `${items.length} update(s)`;
+      return parts.length ? parts.join(', ') : `${items.length} ${t('updates', language)}`;
     }
     case 'removePantryItems': {
       const items = Array.isArray(args.items) ? args.items : [];
       const names = items.map(itemNameLabel).filter(Boolean);
       return names.length
-        ? `刪除 ${names.join(', ')}`
-        : `刪除 ${items.length} item(s)`;
+        ? `${t('remove', language)} ${names.join(', ')}`
+        : `${t('remove', language)} ${items.length} ${t('items', language)}`;
     }
     case 'createRecipe':
-      return String(args.meal_name ?? 'recipe');
+      return String(args.meal_name ?? t('recipe', language));
     case 'updateRecipe':
-      return `update ${String(args.meal_name ?? args.recipe_id ?? 'recipe')}`;
+      return `${t('update', language)} ${String(args.meal_name ?? args.recipe_id ?? t('recipe', language))}`;
     case 'addRecipeToMenu':
-      return `${String(args.meal_name ?? args.recipe_id ?? 'meal')} on ${String(args.serving_date ?? '?')}`;
-    case 'planMeals': {
-      const meals = Array.isArray(args.meals) ? args.meals : [];
-      const dates = meals
-        .map((m) =>
-          m && typeof m === 'object' && 'serving_date' in m
-            ? String((m as { serving_date: unknown }).serving_date)
-            : '',
-        )
-        .filter(Boolean)
-        .sort();
-      const span =
-        dates.length > 0
-          ? `${dates[0]}${dates.length > 1 ? `…${dates[dates.length - 1]}` : ''}`
-          : '?';
-      return `${meals.length} meals (${span})`;
-    }
+      return `${String(args.meal_name ?? args.recipe_id ?? t('meal', language))} ${t('on', language)} ${String(args.serving_date ?? '?')}`;
+    case 'planMeals':
+      return planMealsSummary(args, language);
     case 'updatePreferences':
-      return 'update preferences';
+      return t('updatePreferences', language);
     default:
       return name;
   }
 }
 
-export function toPendingTools(toolCalls: ParsedToolCall[]) {
+export function toPendingTools(
+  toolCalls: ParsedToolCall[],
+  language: ChatLanguage = DEFAULT_CHAT_LANGUAGE,
+) {
   return toolCalls.map((tc) => ({
     name: tc.name,
-    argsSummary: argsSummary(tc.name, tc.arguments),
+    argsSummary: argsSummary(tc.name, tc.arguments, language),
     id: tc.id,
   }));
 }

@@ -4,6 +4,12 @@ export const chatSendBodySchema = z.object({
   message: z.string().optional(),
   sessionId: z.string().optional(),
   clientLocalDate: z.string().optional(),
+  /**
+   * Optional reply language from the app UI: 'zh' | 'en' (locale tags such as
+   * 'zh-TW', 'zh-CN', 'en-US' are accepted by prefix; unknown values are ignored).
+   * When absent the server detects it from the conversation.
+   */
+  language: z.string().max(35).optional(),
 });
 
 export const chatResumeBodySchema = z.object({
@@ -11,6 +17,8 @@ export const chatResumeBodySchema = z.object({
   decision: z.enum(['approve', 'reject']),
   note: z.string().optional(),
   interruptId: z.string().trim().min(1).max(200).optional(),
+  /** Optional reply language, same rules as chat send. */
+  language: z.string().max(35).optional(),
 });
 
 export type ChatResumeBody = z.infer<typeof chatResumeBodySchema>;

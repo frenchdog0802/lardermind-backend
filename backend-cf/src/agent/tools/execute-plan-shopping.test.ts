@@ -127,7 +127,7 @@ describe('planMeals + availability tools', () => {
           },
         ],
       }),
-    ).toBe('2 meals (2026-10-15…2026-10-16)');
+    ).toBe('2 meals (2026-10-15…2026-10-16): 2026-10-15 A; 2026-10-16 B');
   });
 
   it('creates multiple meal plans and returns card', async () => {
@@ -157,6 +157,15 @@ describe('planMeals + availability tools', () => {
     expect(body.truncated).toBe(false);
     expect(plans.size).toBe(2);
     expect(result.cardData?.mealsScheduled).toBe(2);
+    const ledger = JSON.parse(result.content);
+    expect(ledger.requested).toBe(2);
+    expect(ledger.createdCount).toBe(2);
+    expect(ledger.byDate).toEqual({
+      '2026-10-15': { dinner: ['山藥排骨湯'] },
+      '2026-10-16': { dinner: ['酸菜排骨'] },
+    });
+    expect(ledger.existingInSlot).toEqual({});
+    expect(ledger.warning).toBeUndefined();
   });
 
   it('continues after invalid meal and truncates over 28', async () => {
@@ -182,6 +191,11 @@ describe('planMeals + availability tools', () => {
     expect(body.errors.some((e) => e.index === 1)).toBe(true);
     expect(body.created.length).toBeGreaterThan(0);
     expect(body.created.length).toBeLessThanOrEqual(27);
+    const ledger = JSON.parse(result.content);
+    expect(ledger.requested).toBe(30);
+    expect(ledger.createdCount).toBe(body.created.length);
+    expect(ledger.notSaved).toBe(30 - body.created.length);
+    expect(ledger.warning).toMatch(/do not say everything was scheduled/);
   });
 
   it('getMealPlanAvailability returns shoppingHints', async () => {

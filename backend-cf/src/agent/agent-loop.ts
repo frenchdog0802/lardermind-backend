@@ -43,7 +43,7 @@ import { GUEST_TOOL_ALLOWLIST, isGuestAllowedTool } from './tools/guest-allowlis
 import { aggregateCard, type ToolCardEvent } from './tools/cards';
 import { executeTool, type ToolExecResult } from './tools/execute';
 import { isMutatingTool, toPendingTools } from './tools/hitl';
-import { validateToolArgs } from './tools/validate-args';
+import { invalidArgsToolContent, validateToolArgs } from './tools/validate-args';
 import { recheckMutatingTargets } from './tools/recheck-targets';
 import { normalizeToolCallArgs } from './tools/normalize-args';
 import { ErrorCodes } from '../lib/error-codes';
@@ -57,6 +57,14 @@ import {
   MUTATION_TOOL_NUDGE,
 } from './tools/mutating-intent';
 import { isGuestUserRow } from '../db/guests';
+import {
+  detectConversationLanguage,
+  normalizeChatLanguage,
+  resolveChatLanguage,
+  t,
+  userTextsOf,
+  type ChatLanguage,
+} from './language';
 
 export type ChatResponsePayload = {
   type: string;
@@ -193,6 +201,59 @@ async function appendToolResults(
 
 // note: appendToolResults uses options.execute when provided via runToolLoop
 
+/** Schema errors per mutating tool call id (empty map = every call is valid). */
+function mutatingArgErrors(toolCalls: ParsedToolCall[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const tc of toolCalls) {
+    if (!isMutatingTool(tc.name)) continue;
+    const errors = validateToolArgs(tc.name, tc.arguments);
+    if (errors.length) out.set(tc.id, errors);
+  }
+  return out;
+}
+
+/**
+ * Invalid mutating arguments are caught BEFORE the approval card: the model
+ * gets the validation errors as tool results (so it can correct itself within
+ * the round budget) and no interrupt is stored. Valid mutating calls in the
+ * same batch are not run either (they need approval and must be re-sent with
+ * the fix); read-only calls run as usual so every tool_call id is answered.
+ */
+async function answerInvalidMutatingBatch(
+  db: D1Database,
+  userId: string,
+  messages: LlmMessage[],
+  toolCalls: ParsedToolCall[],
+  errorsById: Map<string, string[]>,
+  cardEvents: ToolCardEvent[],
+  execute: ExecuteToolFn,
+): Promise<void> {
+  for (const tc of toolCalls) {
+    const errors = errorsById.get(tc.id);
+    if (errors) {
+      messages.push({
+        role: 'tool',
+        tool_call_id: tc.id,
+        name: tc.name,
+        content: invalidArgsToolContent(tc.name, errors),
+      });
+    } else if (isMutatingTool(tc.name)) {
+      messages.push({
+        role: 'tool',
+        tool_call_id: tc.id,
+        name: tc.name,
+        content: JSON.stringify({
+          skipped: true,
+          reason:
+            'Not run and not sent for approval: another change in this batch had invalid arguments. Call it again together with the corrected call.',
+        }),
+      });
+    } else {
+      await appendToolResults(db, userId, messages, [tc], cardEvents, { execute });
+    }
+  }
+}
+
 async function finalizeText(
   env: Env,
   messages: LlmMessage[],
@@ -244,8 +305,13 @@ async function runToolLoop(
   complete: CompleteChatFn,
   execute: ExecuteToolFn,
   originalUserMessage: string,
-  options: { isGuest?: boolean; previousAssistantText?: string | null } = {},
+  options: {
+    isGuest?: boolean;
+    previousAssistantText?: string | null;
+    language?: ChatLanguage;
+  } = {},
 ): Promise<AgentTurnResult> {
+  const language = options.language ?? 'en';
   const cardEvents: ToolCardEvent[] = [];
   const maxRounds = recursionLimit(env);
   let mutationNudgeUsed = false;
@@ -327,23 +393,36 @@ async function runToolLoop(
       const createdAt = nowUnixSeconds();
       // Units are constrained to the app list before the card is built / stored.
       const toolCalls = await normalizeToolCallArgs(db, userId, result.toolCalls);
+      const argErrors = mutatingArgErrors(toolCalls);
+      if (argErrors.size > 0) {
+        await answerInvalidMutatingBatch(
+          db,
+          userId,
+          messages,
+          toolCalls,
+          argErrors,
+          cardEvents,
+          runExecute,
+        );
+        continue;
+      }
       const pending: PendingInterrupt = {
         createdAt,
         interruptId: crypto.randomUUID(),
         expiresAt: createdAt + HITL_PENDING_TTL_SECONDS,
-        pendingTools: toPendingTools(toolCalls),
+        pendingTools: toPendingTools(toolCalls, language),
         toolCalls: toolCalls.map((tc) => ({
           id: tc.id,
           name: tc.name,
           arguments: tc.arguments,
         })),
         messages: messagesToPending(messages),
+        language,
       };
       await setPendingInterrupt(db, userId, sessionId, pending);
       return {
         kind: 'interrupt',
-        message:
-          'I need your approval before making these changes.',
+        message: t('approvalNeeded', language),
         data: {
           sessionId,
           interruptId: interruptIdOf(pending),
@@ -402,6 +481,7 @@ async function continueAfterApproval(
   cardEvents: ToolCardEvent[],
   complete: CompleteChatFn,
   execute: ExecuteToolFn,
+  language: ChatLanguage = 'en',
 ): Promise<ContinueResult> {
   const user = await findUserById(db, userId);
   const isGuest = isGuestUserRow(user ?? null);
@@ -445,22 +525,36 @@ async function continueAfterApproval(
     if (result.toolCalls.some((tc) => isMutatingTool(tc.name))) {
       const createdAt = nowUnixSeconds();
       const toolCalls = await normalizeToolCallArgs(db, userId, result.toolCalls);
+      const argErrors = mutatingArgErrors(toolCalls);
+      if (argErrors.size > 0) {
+        await answerInvalidMutatingBatch(
+          db,
+          userId,
+          messages,
+          toolCalls,
+          argErrors,
+          cardEvents,
+          runExecute,
+        );
+        continue;
+      }
       const pending: PendingInterrupt = {
         createdAt,
         interruptId: crypto.randomUUID(),
         expiresAt: createdAt + HITL_PENDING_TTL_SECONDS,
-        pendingTools: toPendingTools(toolCalls),
+        pendingTools: toPendingTools(toolCalls, language),
         toolCalls: toolCalls.map((tc) => ({
           id: tc.id,
           name: tc.name,
           arguments: tc.arguments,
         })),
         messages: messagesToPending(messages),
+        language,
       };
       const drafted = result.content.trim();
       return {
         kind: 'interrupt',
-        message: drafted || 'I need your approval before making these changes.',
+        message: drafted || t('approvalNeeded', language),
         pending,
         priorCard: aggregateCard(cardEvents),
       };
@@ -482,16 +576,26 @@ async function continueAfterApproval(
   };
 }
 
-const PENDING_REMINDER =
-  'There is a pending action waiting for your approval. Approve or reject it first.';
+/** Reply language stored on a pending interrupt, else detected from its messages. */
+function pendingLanguage(
+  pending: PendingInterrupt,
+  explicit?: string,
+): ChatLanguage {
+  return (
+    normalizeChatLanguage(explicit) ??
+    pending.language ??
+    detectConversationLanguage(userTextsOf(pending.messages))
+  );
+}
 
 function pendingBusyResult(
   pending: PendingInterrupt,
   sessionId: string,
+  explicitLanguage?: string,
 ): AgentTurnResult {
   return {
     kind: 'interrupt',
-    message: PENDING_REMINDER,
+    message: t('pendingReminder', pendingLanguage(pending, explicitLanguage)),
     data: {
       sessionId,
       interruptId: interruptIdOf(pending),
@@ -512,6 +616,8 @@ export async function runAgentTurn(
     /** When false, skip quota increment (not used for resume). */
     chargeQuota?: boolean;
     isGuest?: boolean;
+    /** Optional client reply language ('zh' | 'en' | locale tag); detected when absent. */
+    language?: string;
   },
   deps?: AgentDeps,
 ): Promise<AgentTurnResult> {
@@ -534,7 +640,7 @@ export async function runAgentTurn(
         existingPending,
       );
       if (!dismissed) {
-        return pendingBusyResult(existingPending, input.sessionId);
+        return pendingBusyResult(existingPending, input.sessionId, input.language);
       }
     } else {
       // A typed yes/no resolves the pending action through the normal resume
@@ -552,13 +658,14 @@ export async function runAgentTurn(
             sessionId: input.sessionId,
             decision,
             interruptId: interruptIdOf(existingPending),
+            language: input.language,
           },
           deps,
         );
       }
       // Anything else: keep the action pending and hand the card back so the
       // client can show Approve / Reject again. No new turn, no quota charge.
-      return pendingBusyResult(existingPending, input.sessionId);
+      return pendingBusyResult(existingPending, input.sessionId, input.language);
     }
   }
 
@@ -612,10 +719,13 @@ export async function runAgentTurn(
       input.sessionId,
     );
     const todayLocalDate = resolveTodayLocalDate(input.clientLocalDate);
+    // History already includes this message; short replies ("A", "ok") fall
+    // back to earlier substantive user messages.
+    const language = resolveChatLanguage(input.language, userTextsOf(history));
     const messages: LlmMessage[] = [
       {
         role: 'system',
-        content: buildCookingAssistantSystemPrompt({ todayLocalDate }),
+        content: buildCookingAssistantSystemPrompt({ todayLocalDate, language }),
       },
       ...history.map((m) => ({
         role: m.role as 'user' | 'assistant',
@@ -634,6 +744,7 @@ export async function runAgentTurn(
       input.message,
       {
         isGuest,
+        language,
         previousAssistantText: [...history]
           .reverse()
           .find((m) => m.role === 'assistant')?.content,
@@ -810,6 +921,8 @@ export async function resumeAgentTurn(
     decision: 'approve' | 'reject';
     note?: string;
     interruptId?: string;
+    /** Optional client reply language; else the pending turn's language. */
+    language?: string;
   },
   deps?: AgentDeps,
 ): Promise<AgentTurnResult> {
@@ -966,6 +1079,8 @@ export async function resumeAgentTurn(
   }));
 
   if (decision === 'approve') {
+    // Safety net: args are validated before the approval card too, but rows
+    // stored before that check (or a schema change) are re-checked here.
     const argErrors = toolCalls.flatMap((tc) =>
       validateToolArgs(tc.name, tc.arguments),
     );
@@ -1085,6 +1200,7 @@ export async function resumeAgentTurn(
           cardEvents,
           complete,
           execute,
+          pendingLanguage(pending, input.language),
         );
         if (continued.kind === 'interrupt') {
           // The model needs another approved step (e.g. planMeals after createRecipe).
