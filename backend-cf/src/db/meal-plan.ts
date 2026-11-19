@@ -639,11 +639,45 @@ export async function getMealPlan(
     .first<MealPlanRow>();
 }
 
+export class EmptyMealNameError extends Error {
+  constructor() {
+    super('meal_name is required (or a recipe_id that resolves to a recipe)');
+    this.name = 'EmptyMealNameError';
+  }
+}
+
+/**
+ * A plan row must never be saved with a blank name (it renders as a hidden "ghost"
+ * entry yet still counts toward shortages). Use the given name, else the linked
+ * recipe's name; throw when neither exists.
+ */
+async function resolveMealName(
+  db: D1Database,
+  userId: string,
+  name: string | undefined | null,
+  recipeId: string | undefined | null,
+): Promise<string> {
+  const trimmed = (name ?? '').trim();
+  if (trimmed) return trimmed;
+  if (recipeId) {
+    const recipe = await getRecipe(db, userId, recipeId);
+    const fromRecipe = recipe?.meal_name?.trim();
+    if (fromRecipe) return fromRecipe;
+  }
+  throw new EmptyMealNameError();
+}
+
 export async function createMealPlan(
   db: D1Database,
   userId: string,
   input: MealPlanInput,
 ): Promise<MealPlanRow> {
+  const mealName = await resolveMealName(
+    db,
+    userId,
+    input.meal_name,
+    input.recipe_id,
+  );
   const id = crypto.randomUUID();
   const now = nowUnixSeconds();
   await db
@@ -658,7 +692,7 @@ export async function createMealPlan(
       input.meal_type,
       input.serving_date,
       input.recipe_id ?? null,
-      input.meal_name ?? '',
+      mealName,
       input.image ?? null,
       input.status ?? 'PLANNED',
       now,
@@ -686,8 +720,21 @@ export async function updateMealPlan(
     patch.recipe_id !== undefined
       ? (patch.recipe_id ?? null)
       : existing.recipe_id;
-  const mealName =
-    patch.meal_name !== undefined ? patch.meal_name : existing.meal_name;
+  let mealName: string;
+  if (patch.meal_name !== undefined || existing.meal_name.trim()) {
+    mealName = await resolveMealName(
+      db,
+      userId,
+      patch.meal_name !== undefined ? patch.meal_name : existing.meal_name,
+      recipeId,
+    );
+  } else {
+    // Legacy blank row not being renamed: heal from the recipe if possible, but
+    // never block unrelated edits (cancel / confirm / move) on old data.
+    mealName = await resolveMealName(db, userId, '', recipeId).catch(
+      () => existing.meal_name,
+    );
+  }
   const image = patch.image !== undefined ? patch.image : existing.image;
   const status = patch.status !== undefined ? patch.status : existing.status;
   const now = nowUnixSeconds();

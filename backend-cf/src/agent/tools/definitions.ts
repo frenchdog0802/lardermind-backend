@@ -314,7 +314,7 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     function: {
       name: 'planMeals',
       description:
-        'Schedule multiple meals on the calendar (requires approval). Prefer over repeated addRecipeToMenu for multi-day plans. Does not deduct pantry; soft-reserves only.',
+        'Schedule multiple meals on the calendar (requires approval). Prefer over repeated addRecipeToMenu for multi-day plans. Does not deduct pantry; soft-reserves only. Each entry becomes its own calendar row: a day with a main AND a side needs TWO entries with the same serving_date + meal_type. Send exactly the dishes you proposed, day by day — never rotate, drop or swap dishes. A side dish with no saved recipe may be sent with just meal_name (no recipe_id); it is then not pantry-checked.',
       parameters: {
         type: 'object',
         properties: {

@@ -152,3 +152,15 @@ describe('buildCookingAssistantSystemPrompt', () => {
     expect(prompt).toMatch(/never write phrases like "0 recipes missing/i);
   });
 });
+
+describe('planMeals side dishes (no silent rotation)', () => {
+  it('tells the model to schedule every proposed dish day by day', () => {
+    const prompt = buildCookingAssistantSystemPrompt({
+      todayLocalDate: '2026-11-19',
+    });
+    expect(prompt).toMatch(/Schedule exactly what you proposed/);
+    expect(prompt).toMatch(/main \+ a side is TWO planMeals entries/);
+    expect(prompt).toMatch(/never rotate, repeat, merge, drop or swap/i);
+    expect(prompt).toMatch(/EVERY proposed dish for EVERY day/);
+  });
+});

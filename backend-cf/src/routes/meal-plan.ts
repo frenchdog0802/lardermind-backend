@@ -7,6 +7,7 @@ import {
   computeWeekAvailability,
   confirmMealPlan,
   createMealPlan,
+  EmptyMealNameError,
   deleteMealPlan,
   getMealPlan,
   listMealPlans,
@@ -159,8 +160,13 @@ mealPlanRoutes.post('/api/meal-plan', async (c) => {
   const parsed = parseCreateInput(body);
   if (!parsed.ok) return c.json(fail(parsed.message), 400);
 
-  const row = await createMealPlan(c.env.DB, userId, parsed.value);
-  return c.json(ok(toMealPlanDto(row)), 201);
+  try {
+    const row = await createMealPlan(c.env.DB, userId, parsed.value);
+    return c.json(ok(toMealPlanDto(row)), 201);
+  } catch (e) {
+    if (e instanceof EmptyMealNameError) return c.json(fail(e.message), 400);
+    throw e;
+  }
 });
 
 mealPlanRoutes.get('/api/meal-plan/:id', async (c) => {
@@ -181,14 +187,19 @@ mealPlanRoutes.put('/api/meal-plan/:id', async (c) => {
   const parsed = parsePatchInput(body);
   if (!parsed.ok) return c.json(fail(parsed.message), 400);
 
-  const updated = await updateMealPlan(
-    c.env.DB,
-    userId,
-    c.req.param('id'),
-    parsed.value,
-  );
-  if (!updated) return c.json(fail('Not found'), 404);
-  return c.json(ok(toMealPlanDto(updated)));
+  try {
+    const updated = await updateMealPlan(
+      c.env.DB,
+      userId,
+      c.req.param('id'),
+      parsed.value,
+    );
+    if (!updated) return c.json(fail('Not found'), 404);
+    return c.json(ok(toMealPlanDto(updated)));
+  } catch (e) {
+    if (e instanceof EmptyMealNameError) return c.json(fail(e.message), 400);
+    throw e;
+  }
 });
 
 mealPlanRoutes.delete('/api/meal-plan/:id', async (c) => {
