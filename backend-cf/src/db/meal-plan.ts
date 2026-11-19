@@ -669,7 +669,15 @@ export async function resolveMealPlanName(
     const fromRecipe = recipe?.meal_name?.trim();
     if (fromRecipe) return fromRecipe;
   }
-  throw new MealPlanValidationError(MEAL_NAME_REQUIRED_MESSAGE);
+  throw new EmptyMealNameError();
+}
+
+/** Kept for callers/tests that match on the specific empty-name failure. */
+export class EmptyMealNameError extends MealPlanValidationError {
+  constructor() {
+    super(MEAL_NAME_REQUIRED_MESSAGE);
+    this.name = 'EmptyMealNameError';
+  }
 }
 
 export async function createMealPlan(
@@ -725,12 +733,19 @@ export async function updateMealPlan(
     patch.recipe_id !== undefined
       ? (patch.recipe_id ?? null)
       : existing.recipe_id;
-  // An explicit (blank) meal_name is resolved from the recipe or rejected;
-  // rows that are not being renamed are left exactly as stored.
-  const mealName =
-    patch.meal_name !== undefined
-      ? await resolveMealPlanName(db, userId, patch.meal_name, recipeId)
-      : existing.meal_name;
+  // An explicit (blank) meal_name is resolved from the recipe or rejected. A legacy row that is
+  // already blank and not being renamed is healed from its recipe when possible, but never
+  // blocks unrelated edits (cancel / confirm / move) on old data.
+  let mealName: string;
+  if (patch.meal_name !== undefined) {
+    mealName = await resolveMealPlanName(db, userId, patch.meal_name, recipeId);
+  } else if (existing.meal_name.trim()) {
+    mealName = existing.meal_name;
+  } else {
+    mealName = await resolveMealPlanName(db, userId, '', recipeId).catch(
+      () => existing.meal_name,
+    );
+  }
   const image = patch.image !== undefined ? patch.image : existing.image;
   const status = patch.status !== undefined ? patch.status : existing.status;
   const now = nowUnixSeconds();

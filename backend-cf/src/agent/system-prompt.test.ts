@@ -236,3 +236,16 @@ describe('reply language', () => {
     expect(p).toMatch(/Do not switch into Chinese examples/i);
   });
 });
+
+describe('planMeals side dishes (no silent rotation)', () => {
+  it('tells the model to schedule every proposed dish day by day', () => {
+    const prompt = buildCookingAssistantSystemPrompt({
+      todayLocalDate: '2026-11-19',
+    });
+    // Same intent as the original wording, expressed by the rewritten prompt (R1/R3/R4).
+    expect(prompt).toMatch(/Every dish you proposed \(main, side, soup\) is its own planMeals entry/);
+    expect(prompt).toMatch(/Never merge dishes into one name/);
+    expect(prompt).toMatch(/Never silently drop or substitute dishes/);
+    expect(prompt).toMatch(/must contain every proposed dish for every day/);
+  });
+});

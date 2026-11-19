@@ -759,6 +759,12 @@ async function executePlanMeals(
     }
   }
 
+  // Per-slot counts let the model check the saved schedule against what it proposed
+  // (e.g. main + side = 2 dishes on a day) and report any gap instead of glossing over it.
+  const perSlot: Record<string, string[]> = {};
+  for (const m of created) {
+    (perSlot[`${m.serving_date} ${m.meal_type}`] ??= []).push(m.meal_name);
+  }
   const cardType = TOOL_CARD_TYPES.planMeals!;
   const mealsCard = created.map(mealPlanUpdatedCardData);
   const byDate: SlotLedger = {};
@@ -773,6 +779,7 @@ async function executePlanMeals(
       createdCount: created.length,
       byDate,
       existingInSlot,
+      savedBySlot: perSlot,
       ...(errors.length > 0 || created.length < raw.length
         ? {
             notSaved: raw.length - created.length,
