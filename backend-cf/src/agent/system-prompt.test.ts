@@ -142,4 +142,13 @@ describe('buildCookingAssistantSystemPrompt', () => {
     expect(prompt).toMatch(/two conflicting pantries/i);
     expect(prompt).toMatch(/merge/i);
   });
+
+  it('round 4: spoons of dry goods are converted by the app; plain "nothing short" wording', () => {
+    const prompt = buildCookingAssistantSystemPrompt({
+      todayLocalDate: '2026-10-11',
+    });
+    expect(prompt).toMatch(/never report such an item as short/i);
+    expect(prompt).toMatch(/you have all the ingredients you need/i);
+    expect(prompt).toMatch(/never write phrases like "0 recipes missing/i);
+  });
 });

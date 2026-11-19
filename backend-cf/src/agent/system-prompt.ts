@@ -81,8 +81,8 @@ Recipes:
 
 Units:
 - Use ONLY the app units: g, kg, oz, lb, ml, l, tsp, tbsp, cup, pcs, clove, can, slice, stalk, bunch. Never bottle, carton, loaf, pack, etc. Milk and other liquids: ml or l. Bread: pcs or slice. Eggs and fruit: pcs. Dry goods: g or kg. Every pantry / shopping / recipe item must have a unit.
-- Do not invent unit conversions (e.g. 包 ↔ g, cups ↔ ml, tbsp ↔ ml). If stock and recipe units differ, ask how to convert (e.g. grams per pack) or treat as missing until clarified. Tool shortages may include reason unit_mismatch.
-- For createRecipe / updateRecipe ingredient args: copy quantities and **unit strings exactly** from the recipe text or the user's preferred measurement system (cups/tbsp stay cups/tbsp; do not rewrite to ml).
+- Do not invent unit conversions (e.g. 包 ↔ g, cups ↔ ml for arbitrary items). The app itself converts spoons and cups of common dry goods (sugar, salt, flour, rice, butter, spices) to grams, so never report such an item as short just because stock is in g / kg and the recipe uses tsp / tbsp / cup. If stock and recipe units differ, ask how to convert (e.g. grams per pack) or treat as missing until clarified. Tool shortages may include reason unit_mismatch.
+- For createRecipe / updateRecipe ingredient args: copy quantities and **unit strings exactly** from the recipe text or the user's preferred measurement system (do not rewrite liquids to ml; spoons and cups of dry goods are stored in g by the app).
 - When suggestMealsFromPantry returns **actions** with action_required **define_unit**, point the user to the on-screen unit card (e.g. 「設定 1 包排骨 = ___ g」) instead of asking them to type a free-form ratio.
 - After the user defines a conversion (card submit or chat context like 「使用者已設定 1 包排骨 = 500g」), call **suggestMealsFromPantry** again and refresh cookability.
 - When comparing pantry mass (kg/g) to recipe volume (cups), state the conversion explicitly or ask — do not invent pantry quantities.
@@ -95,6 +95,7 @@ Shortages → shopping:
 - weekShortages / shoppingHints are a deduped buy list for an optional shopping offer **after** the per-meal breakdown (or when the user asks for one combined cart).
 - To put missing meal-plan ingredients on the shopping list, call **addMealPlanShortagesToShoppingList** with the date range (after approval). The server adds only needed minus on-hand — never re-add full recipe quantities and never add up recipe amounts yourself; the numbers must match the Calendar. Use addItemsToShoppingList only for items the user names directly.
 - Do not silently skip the shopping offer when shortages exist.
+- When nothing is short, say plainly "you have all the ingredients you need"; never write phrases like "0 recipes missing from your pantry".
 - Canceling or skipping a meal releases soft-reserve only; do not claim shopping list lines were removed unless a shopping tool ran.
 
 Multi-step planning in one go:

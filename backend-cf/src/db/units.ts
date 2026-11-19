@@ -90,6 +90,77 @@ export function standardConvert(
 }
 
 // ---------------------------------------------------------------------------
+// Density (volume <-> weight) for common kitchen ingredients
+// ---------------------------------------------------------------------------
+
+/** Approx. grams per millilitre, matched against the ingredient name. */
+const DENSITY_G_PER_ML: Array<[RegExp, number]> = [
+  [/\b(salt)\b|鹽|盐/, 1.2],
+  [/\b(brown sugar)\b/, 0.93],
+  [/\b(icing sugar|powdered sugar|confectioners)\b/, 0.56],
+  [/\b(sugar)\b|糖/, 0.85],
+  [/\b(flour|cornflour|cornstarch|starch)\b|麵粉|面粉|澱粉|淀粉/, 0.53],
+  [/\b(rice)\b|米/, 0.85],
+  [/\b(butter)\b|奶油|牛油/, 0.96],
+  [/\b(oats?)\b/, 0.4],
+  [/\b(cocoa)\b/, 0.5],
+  [/\b(baking powder|baking soda|yeast)\b/, 0.9],
+  [/\b(honey|maple syrup)\b|蜂蜜/, 1.4],
+  [/\b(oil)\b|油/, 0.92],
+  [/\b(milk|cream)\b|牛奶|鮮奶|鲜奶/, 1.03],
+  [/\b(water)\b|水/, 1],
+  [
+    /\b(spice|spices|pepper|cinnamon|paprika|cumin|turmeric|chili powder|curry powder|powder|seasoning)\b|胡椒|香料/,
+    0.5,
+  ],
+];
+
+/** Dry staples that should be weighed (g) rather than measured by volume. */
+const DRY_GOOD_HINT =
+  /\b(salt|sugar|flour|cornflour|cornstarch|starch|rice|butter|oats?|cocoa|baking powder|baking soda|yeast|spice|spices|pepper|cinnamon|paprika|cumin|turmeric|chili powder|curry powder|seasoning)\b|鹽|盐|糖|麵粉|面粉|澱粉|淀粉|奶油|牛油|胡椒|香料/;
+const NOT_DRY_HINT = /\b(syrup|sauce|oil|vinegar|milk|juice)\b|醬油|酱油|油|醋/;
+
+export function densityForName(name: string | null | undefined): number | null {
+  const n = (name ?? '').toLowerCase();
+  if (!n) return null;
+  for (const [re, d] of DENSITY_G_PER_ML) if (re.test(n)) return d;
+  return null;
+}
+
+export function isDryGood(name: string | null | undefined): boolean {
+  const n = (name ?? '').toLowerCase();
+  return DRY_GOOD_HINT.test(n) && !NOT_DRY_HINT.test(n);
+}
+
+/**
+ * standardConvert, plus weight <-> volume via a small density table when the
+ * ingredient name is known. Returns null when the pair is not convertible.
+ */
+export function convertQty(
+  qty: number,
+  fromUnit: string | null | undefined,
+  toUnit: string | null | undefined,
+  name?: string | null,
+): number | null {
+  const direct = standardConvert(qty, fromUnit, toUnit);
+  if (direct != null) return direct;
+  const from = canonicalUnit(fromUnit);
+  const to = canonicalUnit(toUnit);
+  if (!from || !to || !Number.isFinite(qty)) return null;
+  const kf = unitKind(from);
+  const kt = unitKind(to);
+  const density = densityForName(name);
+  if (density == null) return null;
+  if (kf === 'volume' && kt === 'weight') {
+    return (qty * TO_BASE[from]! * density) / TO_BASE[to]!;
+  }
+  if (kf === 'weight' && kt === 'volume') {
+    return (qty * TO_BASE[from]!) / density / TO_BASE[to]!;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Name matching
 // ---------------------------------------------------------------------------
 
@@ -184,4 +255,25 @@ export function normalizeToolUnit(
     return 'l';
   }
   return defaultUnitForItem(name, quantity, context);
+}
+
+/**
+ * Normalize a model-supplied quantity + unit into stored app units: dry goods
+ * measured by volume (tsp / tbsp / cup / ml) become grams, so the model cannot
+ * persist odd values such as "Sugar 10 ml". Liquids keep their volume unit.
+ */
+export function normalizeToolQuantity(
+  name: string | null | undefined,
+  rawQuantity: number,
+  rawUnit: string | null | undefined,
+  context: 'stock' | 'recipe' = 'stock',
+): { quantity: number; unit: string } {
+  const unit = normalizeToolUnit(name, rawUnit, rawQuantity, context);
+  if (unitKind(unit) === 'volume' && isDryGood(name)) {
+    const grams = convertQty(rawQuantity, unit, 'g', name);
+    if (grams != null) {
+      return { quantity: Math.round(grams * 10) / 10, unit: 'g' };
+    }
+  }
+  return { quantity: rawQuantity, unit };
 }

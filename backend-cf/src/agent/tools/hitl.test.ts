@@ -61,6 +61,23 @@ describe('HITL helpers', () => {
     ).toBe('2 meals (2026-10-15…2026-10-16)');
   });
 
+  it('summaries include quantities and date ranges for readable approval cards', () => {
+    expect(
+      argsSummary('addItemsToShoppingList', {
+        items: [
+          { name: 'Salt', quantity: 18, unit: 'g' },
+          { name: 'Soy sauce', quantity: 37.5, unit: 'ml' },
+        ],
+      }),
+    ).toBe('Salt 18 g, Soy sauce 37.5 ml');
+    expect(
+      argsSummary('addMealPlanShortagesToShoppingList', {
+        from: '2026-11-18',
+        to: '2026-11-22',
+      }),
+    ).toBe('missing ingredients, 2026-11-18 – 2026-11-22');
+  });
+
   it('maps pending tool summaries', () => {
     const pending = toPendingTools([
       {
@@ -136,8 +153,17 @@ describe('recipeCreatedCardData', () => {
       recipeId: 'r1',
       recipeName: '燙青菜',
       ingredientCount: 2,
+      ingredients: [{ name: '青菜' }, { name: '鹽' }],
       steps: ['燙熟', '加鹽'],
     });
+    expect(
+      recipeCreatedCardData({
+        id: 'r2',
+        meal_name: 'Rice',
+        ingredients: [{ name: 'Rice', quantity: 300, unit: 'g' }],
+        instructions: [],
+      }).ingredients,
+    ).toEqual([{ name: 'Rice', quantity: 300, unit: 'g' }]);
     expect(
       mealPlanUpdatedCardData({
         id: 'p1',

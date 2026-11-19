@@ -44,8 +44,9 @@ import {
 } from '../../db/shopping-list';
 import {
   ingredientNameKey,
+  convertQty,
+  normalizeToolQuantity,
   normalizeToolUnit,
-  standardConvert,
 } from '../../db/units';
 import {
   convertQuantity,
@@ -173,11 +174,7 @@ export function shortagesToShoppingItems(
     if (!name) continue;
     const qty = Number.isFinite(s.needed) ? Math.max(0, s.needed) : 0;
     if (qty <= 0) continue;
-    out.push({
-      name,
-      quantity: qty,
-      unit: normalizeToolUnit(name, s.unit, qty),
-    });
+    out.push({ name, ...normalizeToolQuantity(name, qty, s.unit) });
   }
   return out;
 }
@@ -219,7 +216,7 @@ async function executeAddMealPlanShortages(
       const conv =
         normalizeUnitKey(row.unit) === normalizeUnitKey(item.unit)
           ? qty
-          : standardConvert(qty, row.unit, item.unit);
+          : convertQty(qty, row.unit, item.unit, item.name);
       if (conv != null) already += conv;
     }
     const toAdd = Math.round((item.quantity - already) * 1000) / 1000;
@@ -282,8 +279,7 @@ function itemListFromArgs(args: Record<string, unknown>): Array<{
     const quantity = asNumber(obj.quantity, 1);
     out.push({
       name,
-      quantity,
-      unit: normalizeToolUnit(name, asString(obj.unit), quantity),
+      ...normalizeToolQuantity(name, quantity, asString(obj.unit)),
     });
   }
   return out;
@@ -365,7 +361,7 @@ async function executeUpdatePantryItems(
     }
 
     const current = quantityFromRow(row.quantity);
-    const newQty =
+    let newQty =
       mode === 'delta' ? current + asNumber(obj.delta, 0) : asNumber(obj.quantity, 0);
 
     if (newQty <= 0) {
@@ -381,9 +377,15 @@ async function executeUpdatePantryItems(
     }
 
     const rawUnit = asString(obj.unit).trim();
-    const unit = rawUnit
-      ? normalizeToolUnit(row.name, rawUnit, newQty)
-      : row.unit?.trim() || normalizeToolUnit(row.name, '', newQty);
+    // Server-side guard: dry goods are never stored in ml / tsp / tbsp.
+    let unit: string;
+    if (rawUnit) {
+      const norm = normalizeToolQuantity(row.name, newQty, rawUnit);
+      unit = norm.unit;
+      newQty = norm.quantity;
+    } else {
+      unit = row.unit?.trim() || normalizeToolUnit(row.name, '', newQty);
+    }
     const unitChanged =
       unit.toLowerCase() !== (row.unit?.trim() || '').toLowerCase();
     const updated = await updatePantryItem(db, userId, row.id, {
@@ -481,11 +483,11 @@ export function ingredientInputsFromArgs(
     if (!name) continue;
     const quantity = asNumber(obj.quantity, 0);
     const unitRaw = typeof obj.unit === 'string' ? obj.unit.trim() : '';
-    const unit = normalizeToolUnit(name, unitRaw, quantity, 'recipe');
+    const norm = normalizeToolQuantity(name, quantity, unitRaw, 'recipe');
     out.push({
       name,
-      quantity,
-      unit,
+      quantity: norm.quantity,
+      unit: norm.unit,
       ...(typeof obj.ingredient_id === 'string'
         ? { ingredient_id: obj.ingredient_id }
         : {}),
