@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   resumeAgentTurn,
+  runAgentTurn,
   type CompleteChatFn,
   type ExecuteToolFn,
 } from './agent-loop';
@@ -339,5 +340,86 @@ describe('HITL resume single execution', () => {
     );
     expect(runs).toBe(0);
     expect(turn).toMatchObject({ kind: 'error', status: 409, code: 'target_missing' });
+  });
+});
+
+describe('typed yes/no while an action is pending', () => {
+  const execOk = () => {
+    const calls: string[] = [];
+    const execute: ExecuteToolFn = async (_db, _u, name) => {
+      calls.push(name);
+      return {
+        content: JSON.stringify({ ok: true }),
+        cardType: 'pantry_updated',
+        cardData: { items: [{ name: 'butter' }] },
+      };
+    };
+    return { calls, execute };
+  };
+  const neverComplete: CompleteChatFn = async () => {
+    throw new Error('model must not be called for a new turn');
+  };
+
+  for (const text of ['yes, save it', 'Yes please', 'ok', 'approve', '好', '確認']) {
+    it(`approves on "${text}" without charging quota`, async () => {
+      const { db: base, session } = hitlDb(pending());
+      const { db, seen } = recordSql(base);
+      const { calls, execute } = execOk();
+      const turn = await runAgentTurn(
+        { DB: db } as Env,
+        { userId: 'u1', sessionId: 's1', message: text },
+        { completeChat: completeOk, executeTool: execute },
+      );
+      expect(turn.kind).toBe('complete');
+      expect(calls).toEqual(['addPantryItems']);
+      expect(session.pending_interrupt_json).toBeNull();
+      expect(seen.filter((sql) => /usage_quotas/i.test(sql))).toEqual([]);
+    });
+  }
+
+  for (const text of ['no', 'cancel', '不要', 'no thanks', '取消']) {
+    it(`rejects on "${text}" without executing`, async () => {
+      const { db, session } = hitlDb(pending());
+      const { calls, execute } = execOk();
+      const turn = await runAgentTurn(
+        { DB: db } as Env,
+        { userId: 'u1', sessionId: 's1', message: text },
+        { completeChat: completeOk, executeTool: execute },
+      );
+      expect(turn.kind).toBe('complete');
+      expect(calls).toEqual([]);
+      expect(session.pending_interrupt_json).toBeNull();
+    });
+  }
+
+  it('keeps the action pending and returns the card for other text', async () => {
+    const { db, session } = hitlDb(pending());
+    const { calls, execute } = execOk();
+    const turn = await runAgentTurn(
+      { DB: db } as Env,
+      { userId: 'u1', sessionId: 's1', message: 'what else can I cook?' },
+      { completeChat: neverComplete, executeTool: execute },
+    );
+    expect(turn.kind).toBe('interrupt');
+    if (turn.kind === 'interrupt') {
+      expect(turn.message).toContain('Approve or reject');
+      expect(turn.data.interruptId).toBe('int-1');
+      expect(turn.data.pendingTools[0]?.name).toBe('addPantryItems');
+    }
+    expect(calls).toEqual([]);
+    expect(session.pending_interrupt_json).not.toBeNull();
+  });
+
+  it('does not treat a mixed reply ("no, save it") as approval', async () => {
+    const { db, session } = hitlDb(pending());
+    const { calls, execute } = execOk();
+    const turn = await runAgentTurn(
+      { DB: db } as Env,
+      { userId: 'u1', sessionId: 's1', message: 'no, save it' },
+      { completeChat: neverComplete, executeTool: execute },
+    );
+    expect(turn.kind).toBe('interrupt');
+    expect(calls).toEqual([]);
+    expect(session.pending_interrupt_json).not.toBeNull();
   });
 });

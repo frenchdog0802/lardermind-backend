@@ -1,6 +1,7 @@
 import type { Env } from '../env';
 import {
   claimPendingInterrupt,
+  expiresAtOf,
   finishHitlCheckpoint,
   HITL_PENDING_TTL_SECONDS,
   getPendingInterrupt,
@@ -49,6 +50,8 @@ import {
   looksLikeFalseMutationSuccess,
   looksLikeConfirmingWriteOffer,
   looksLikeMutatingUserRequest,
+  isAffirmativeReply,
+  isNegativeReply,
   MUTATION_NO_TOOL_FALLBACK,
   MUTATION_TOOL_NUDGE,
 } from './tools/mutating-intent';
@@ -368,6 +371,25 @@ async function runToolLoop(
   };
 }
 
+const PENDING_REMINDER =
+  'There is a pending action waiting for your approval. Approve or reject it first.';
+
+function pendingBusyResult(
+  pending: PendingInterrupt,
+  sessionId: string,
+): AgentTurnResult {
+  return {
+    kind: 'interrupt',
+    message: PENDING_REMINDER,
+    data: {
+      sessionId,
+      interruptId: interruptIdOf(pending),
+      expiresAt: expiresAtOf(pending),
+      pendingTools: pending.pendingTools,
+    },
+  };
+}
+
 export async function runAgentTurn(
   env: Env,
   input: {
@@ -401,18 +423,31 @@ export async function runAgentTurn(
         existingPending,
       );
       if (!dismissed) {
-        return {
-          kind: 'busy',
-          message:
-            'There is a pending action waiting for your approval. Approve or reject it first.',
-        };
+        return pendingBusyResult(existingPending, input.sessionId);
       }
     } else {
-      return {
-        kind: 'busy',
-        message:
-          'There is a pending action waiting for your approval. Approve or reject it first.',
-      };
+      // A typed yes/no resolves the pending action through the normal resume
+      // path (no quota charge, same claim/double-execution guards as the buttons).
+      const decision = isAffirmativeReply(input.message)
+        ? 'approve'
+        : isNegativeReply(input.message)
+          ? 'reject'
+          : null;
+      if (decision) {
+        return resumeAgentTurn(
+          env,
+          {
+            userId: input.userId,
+            sessionId: input.sessionId,
+            decision,
+            interruptId: interruptIdOf(existingPending),
+          },
+          deps,
+        );
+      }
+      // Anything else: keep the action pending and hand the card back so the
+      // client can show Approve / Reject again. No new turn, no quota charge.
+      return pendingBusyResult(existingPending, input.sessionId);
     }
   }
 
