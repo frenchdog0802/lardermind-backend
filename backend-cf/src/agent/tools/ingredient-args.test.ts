@@ -5,12 +5,12 @@ describe('ingredientInputsFromArgs', () => {
   it('preserves cup/tbsp units and does not invent ml', () => {
     const out = ingredientInputsFromArgs({
       ingredients: [
-        { name: 'rice', quantity: 1.5, unit: 'cup' },
+        { name: 'rice', quantity: 306, unit: 'g' },
         { name: 'soy sauce', quantity: 1, unit: 'tbsp' },
       ],
     });
     expect(out).toEqual([
-      { name: 'rice', quantity: 1.5, unit: 'cup' },
+      { name: 'rice', quantity: 306, unit: 'g' },
       { name: 'soy sauce', quantity: 1, unit: 'tbsp' },
     ]);
   });

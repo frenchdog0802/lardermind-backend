@@ -27,6 +27,17 @@ function itemNameLabel(item: unknown): string {
   return '';
 }
 
+/** "Salt 18 g" when a quantity is known, otherwise just the name. */
+function itemQtyLabel(item: unknown): string {
+  const name = itemNameLabel(item);
+  if (!name || !item || typeof item !== 'object') return name;
+  const obj = item as Record<string, unknown>;
+  if (typeof obj.quantity !== 'number' || !Number.isFinite(obj.quantity)) return name;
+  const qty = Math.round(obj.quantity * 10) / 10;
+  const unit = typeof obj.unit === 'string' ? obj.unit.trim() : '';
+  return `${name} ${qty}${unit ? ` ${unit}` : ''}`;
+}
+
 function updateItemSummary(item: unknown): string {
   if (!item || typeof item !== 'object') return '';
   const obj = item as Record<string, unknown>;
@@ -56,11 +67,11 @@ export function argsSummary(
     case 'addPantryItems':
     case 'addItemsToShoppingList': {
       const items = Array.isArray(args.items) ? args.items : [];
-      const names = items.map(itemNameLabel).filter(Boolean);
+      const names = items.map(itemQtyLabel).filter(Boolean);
       return names.length ? names.join(', ') : `${items.length} item(s)`;
     }
     case 'addMealPlanShortagesToShoppingList':
-      return `missing items ${String(args.from ?? '?')}…${String(args.to ?? '?')}`;
+      return `missing ingredients, ${String(args.from ?? '?')} – ${String(args.to ?? '?')}`;
     case 'updatePantryItems': {
       const items = Array.isArray(args.items) ? args.items : [];
       const parts = items.map(updateItemSummary).filter(Boolean);

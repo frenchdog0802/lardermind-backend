@@ -1,5 +1,5 @@
 import { findPantryByNameLoose, getPantryItem } from '../../db/pantry';
-import { normalizeToolUnit } from '../../db/units';
+import { normalizeToolQuantity, normalizeToolUnit } from '../../db/units';
 
 type ToolCallLike = { name: string; arguments: Record<string, unknown> };
 
@@ -39,10 +39,10 @@ export async function normalizeToolCallArgs<T extends ToolCallLike>(
           const name = typeof item.name === 'string' ? item.name : '';
           return {
             ...item,
-            unit: normalizeToolUnit(
+            ...normalizeToolQuantity(
               name,
-              typeof item.unit === 'string' ? item.unit : '',
               num(item.quantity, 1),
+              typeof item.unit === 'string' ? item.unit : '',
             ),
           };
         }),
@@ -67,9 +67,18 @@ export async function normalizeToolCallArgs<T extends ToolCallLike>(
         const rawUnit = typeof item.unit === 'string' ? item.unit.trim() : '';
         const label = name || row?.name || '';
         const qty = num(item.quantity, num(item.delta, 1));
-        const unit = rawUnit
-          ? normalizeToolUnit(label, rawUnit, qty)
-          : row?.unit?.trim() || normalizeToolUnit(label, '', qty);
+        if (rawUnit) {
+          const norm = normalizeToolQuantity(label, qty, rawUnit);
+          const converted = norm.unit !== rawUnit.toLowerCase() && norm.quantity !== qty;
+          const patch: Record<string, unknown> = { unit: norm.unit };
+          if (converted) {
+            if (typeof item.delta === 'number') patch.delta = norm.quantity;
+            else patch.quantity = norm.quantity;
+          }
+          mapped.push({ ...item, ...patch });
+          continue;
+        }
+        const unit = row?.unit?.trim() || normalizeToolUnit(label, '', qty);
         mapped.push({ ...item, unit });
       }
       next = { ...args, items: mapped };
@@ -82,10 +91,10 @@ export async function normalizeToolCallArgs<T extends ToolCallLike>(
             if (!ing) return raw;
             return {
               ...ing,
-              unit: normalizeToolUnit(
+              ...normalizeToolQuantity(
                 typeof ing.name === 'string' ? ing.name : '',
-                typeof ing.unit === 'string' ? ing.unit : '',
                 num(ing.quantity, 0),
+                typeof ing.unit === 'string' ? ing.unit : '',
                 'recipe',
               ),
             };

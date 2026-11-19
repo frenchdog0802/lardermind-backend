@@ -14,7 +14,7 @@ import {
   type RecipeIngredientRow,
   type RecipeRow,
 } from './recipe';
-import { canonicalUnit, ingredientNameKey, standardConvert } from './units';
+import { canonicalUnit, convertQty, ingredientNameKey } from './units';
 
 export type MealPlanRow = {
   id: string;
@@ -352,7 +352,7 @@ export function allocateIngredientsAgainstPool(
     for (const lot of ordered) {
       const inNeedUnit = unitsMatch(unit, lot.unit)
         ? lot.quantity
-        : standardConvert(lot.quantity, lot.unit, unit);
+        : convertQty(lot.quantity, lot.unit, unit, ing.name);
       if (inNeedUnit == null) continue;
       compatible = true;
       if (remaining <= EPS) continue;
@@ -362,7 +362,7 @@ export function allocateIngredientsAgainstPool(
       if (unitsMatch(unit, lot.unit)) {
         lot.quantity = Math.max(0, lot.quantity - take);
       } else {
-        const back = standardConvert(take, unit, lot.unit);
+        const back = convertQty(take, unit, lot.unit, ing.name);
         lot.quantity = Math.max(0, lot.quantity - (back ?? 0));
       }
     }
@@ -422,7 +422,7 @@ export function aggregateWeekShortages(
         }
         const inExisting = unitsMatch(existing.unit, s.unit)
           ? deficit
-          : standardConvert(deficit, s.unit, existing.unit);
+          : convertQty(deficit, s.unit, existing.unit, s.name);
         if (inExisting == null) continue;
         existing.needed = roundQty(existing.needed + inExisting);
         merged = true;
@@ -722,7 +722,14 @@ export async function confirmMealPlan(
         }
 
         const available = quantityFromRow(pantry.quantity);
+        let needInPantryUnit = needed;
+        let convertible = true;
         if (!unitsMatch(unit, pantry.unit)) {
+          const conv = convertQty(needed, unit, pantry.unit, ing.name);
+          if (conv == null) convertible = false;
+          else needInPantryUnit = conv;
+        }
+        if (!convertible) {
           shortages.push({
             ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
             name: ing.name,
@@ -734,7 +741,7 @@ export async function confirmMealPlan(
           continue;
         }
 
-        const deductQty = Math.min(available, needed);
+        const deductQty = Math.min(available, needInPantryUnit);
         const newQty = available - deductQty;
 
         if (newQty <= 0) {
@@ -754,11 +761,11 @@ export async function confirmMealPlan(
           });
         }
 
-        if (deductQty < needed) {
+        if (deductQty < needInPantryUnit) {
           shortages.push({
             ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
             name: ing.name,
-            needed,
+            needed: needInPantryUnit,
             available,
             unit: pantry.unit ?? unit,
           });
@@ -794,4 +801,8 @@ export async function skipMealPlan(
   if (!updated) return null;
 
   return { mealPlan: toMealPlanDto(updated), alreadySkipped: false };
+}
+
+export function shortageDeficit(s: MealConfirmShortage): number {
+  return roundQty(Math.max(0, s.needed - (s.available ?? 0)));
 }
