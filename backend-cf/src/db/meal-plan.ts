@@ -2,7 +2,7 @@ import { nowUnixSeconds } from '../lib/time';
 import {
   deletePantryItem,
   findByIngredientId,
-  findByNameCi,
+  findPantryByNameLoose,
   listPantryItems,
   updatePantryItem,
   type PantryItemRow,
@@ -14,7 +14,11 @@ import {
   type RecipeIngredientRow,
   type RecipeRow,
 } from './recipe';
-import { canonicalUnit, convertQty, ingredientNameKey } from './units';
+import {
+  canonicalUnit,
+  convertQtyBetweenItems,
+  ingredientNameKey,
+} from './units';
 
 export type MealPlanRow = {
   id: string;
@@ -350,21 +354,16 @@ export function allocateIngredientsAgainstPool(
       ...lots.filter((l) => !unitsMatch(unit, l.unit)),
     ];
     for (const lot of ordered) {
-      const inNeedUnit = unitsMatch(unit, lot.unit)
-        ? lot.quantity
-        : convertQty(lot.quantity, lot.unit, unit, ing.name);
+      // Unit conversion plus cooked <-> dry staple ratio (1 kg raw rice covers 600 g cooked).
+      const inNeedUnit = convertQtyBetweenItems(lot.quantity, lot.unit, unit, lot.name, ing.name);
       if (inNeedUnit == null) continue;
       compatible = true;
       if (remaining <= EPS) continue;
       const take = Math.min(Math.max(0, inNeedUnit), remaining);
       if (take <= 0) continue;
       remaining -= take;
-      if (unitsMatch(unit, lot.unit)) {
-        lot.quantity = Math.max(0, lot.quantity - take);
-      } else {
-        const back = convertQty(take, unit, lot.unit, ing.name);
-        lot.quantity = Math.max(0, lot.quantity - (back ?? 0));
-      }
+      const back = convertQtyBetweenItems(take, unit, lot.unit, ing.name, lot.name);
+      lot.quantity = Math.max(0, lot.quantity - (back ?? 0));
     }
 
     if (!compatible) {
@@ -420,9 +419,13 @@ export function aggregateWeekShortages(
         if (itemKey(existing) !== key && nameKey(existing.name) !== nameKey(s.name)) {
           continue;
         }
-        const inExisting = unitsMatch(existing.unit, s.unit)
-          ? deficit
-          : convertQty(deficit, s.unit, existing.unit, s.name);
+        const inExisting = convertQtyBetweenItems(
+          deficit,
+          s.unit,
+          existing.unit,
+          s.name,
+          existing.name,
+        );
         if (inExisting == null) continue;
         existing.needed = roundQty(existing.needed + inExisting);
         merged = true;
@@ -678,7 +681,8 @@ async function findPantryForIngredient(
     const byId = await findByIngredientId(db, userId, ing.ingredient_id);
     if (byId) return byId;
   }
-  return findByNameCi(db, userId, ing.name);
+  // Loose match (plural / "cooked rice" ~ "rice") so confirm agrees with the Need lights.
+  return findPantryByNameLoose(db, userId, ing.name);
 }
 
 export async function confirmMealPlan(
@@ -725,9 +729,11 @@ export async function confirmMealPlan(
         let needInPantryUnit = needed;
         let convertible = true;
         if (!unitsMatch(unit, pantry.unit)) {
-          const conv = convertQty(needed, unit, pantry.unit, ing.name);
+          const conv = convertQtyBetweenItems(needed, unit, pantry.unit, ing.name, pantry.name);
           if (conv == null) convertible = false;
           else needInPantryUnit = conv;
+        } else {
+          needInPantryUnit = convertQtyBetweenItems(needed, unit, pantry.unit, ing.name, pantry.name) ?? needed;
         }
         if (!convertible) {
           shortages.push({
