@@ -1,4 +1,4 @@
-import { getPantryItem, findByNameCi } from '../../db/pantry';
+import { getPantryItem, findPantryByNameLoose } from '../../db/pantry';
 import { getRecipe } from '../../db/recipe';
 
 export type MissingTarget = {
@@ -29,7 +29,7 @@ async function pantryTargetExists(
   }
   const name = asString(item.name);
   if (!name) return false;
-  const row = await findByNameCi(db, userId, name);
+  const row = await findPantryByNameLoose(db, userId, name);
   return row != null;
 }
 
@@ -43,6 +43,8 @@ export async function recheckMutatingTargets(
   toolCalls: Array<{ name: string; arguments: Record<string, unknown> }>,
 ): Promise<MissingTarget[]> {
   const missing: MissingTarget[] = [];
+  // A recipe created earlier in the same approved batch does not exist yet.
+  const batchCreatesRecipes = toolCalls.some((c) => c.name === 'createRecipe');
 
   for (const call of toolCalls) {
     if (call.name === 'updatePantryItems' || call.name === 'removePantryItems') {
@@ -64,9 +66,12 @@ export async function recheckMutatingTargets(
       }
     }
 
+    // Recipe ids are only a link: execute falls back to a meal_name match (or an
+    // unlinked meal), so a stale / unknown recipe_id must not block approval when
+    // the slot still has a meal_name or the batch creates the recipe.
     if (call.name === 'addRecipeToMenu') {
       const recipeId = asString(call.arguments.recipe_id);
-      if (recipeId) {
+      if (recipeId && !asString(call.arguments.meal_name) && !batchCreatesRecipes) {
         const recipe = await getRecipe(db, userId, recipeId);
         if (!recipe) missing.push({ tool: call.name, id: recipeId });
       }
@@ -78,7 +83,7 @@ export async function recheckMutatingTargets(
         const meal = asRecord(raw);
         if (!meal) continue;
         const recipeId = asString(meal.recipe_id);
-        if (!recipeId) continue;
+        if (!recipeId || asString(meal.meal_name) || batchCreatesRecipes) continue;
         const recipe = await getRecipe(db, userId, recipeId);
         if (!recipe) missing.push({ tool: call.name, id: recipeId });
       }

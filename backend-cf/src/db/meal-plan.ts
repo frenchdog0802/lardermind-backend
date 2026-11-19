@@ -10,8 +10,11 @@ import {
 import {
   getRecipe,
   listRecipeIngredientRows,
+  listRecipes,
   type RecipeIngredientRow,
+  type RecipeRow,
 } from './recipe';
+import { canonicalUnit, ingredientNameKey, standardConvert } from './units';
 
 export type MealPlanRow = {
   id: string;
@@ -113,6 +116,8 @@ export type PantryPoolEntry = {
   pantry_item_id?: string;
   quantity: number;
   unit: string;
+  /** Other pantry rows sharing the same name key (e.g. milk in ml and in l). */
+  siblings?: PantryPoolEntry[];
 };
 
 /** Soft-reserve view: on-hand unchanged in DB; reserved is virtual allocation. */
@@ -138,7 +143,11 @@ function quantityFromRow(raw: string | null): number {
 }
 
 function nameKey(name: string): string {
-  return `name:${name.trim().toLowerCase()}`;
+  return `name:${ingredientNameKey(name) || name.trim().toLowerCase()}`;
+}
+
+function rowKey(pantryItemId: string): string {
+  return `row:${pantryItemId}`;
 }
 
 function idKey(ingredientId: string): string {
@@ -147,11 +156,15 @@ function idKey(ingredientId: string): string {
 
 function shortageAggKey(s: MealConfirmShortage): string {
   const id = s.ingredient_id?.trim();
-  if (id) return `${idKey(id)}|${s.unit}`;
-  return `${nameKey(s.name)}|${s.unit}`;
+  if (id) return `${idKey(id)}|${normalizeUnitKey(s.unit)}`;
+  return `${nameKey(s.name)}|${normalizeUnitKey(s.unit)}`;
 }
 
-/** Build a pool map keyed by ingredient_id and by lowercased name (same object). */
+/**
+ * Build a pool map keyed by ingredient_id, by normalized name (case / plural /
+ * filler-adjective insensitive) and by pantry row id. Rows that share a name key
+ * (different units) are chained through `siblings` so none is dropped.
+ */
 export function buildPantryPool(
   rows: PantryItemRow[],
 ): Map<string, PantryPoolEntry> {
@@ -164,8 +177,20 @@ export function buildPantryPool(
       unit: row.unit ?? 'pcs',
       ...(row.ingredient_id ? { ingredient_id: row.ingredient_id } : {}),
     };
-    if (row.ingredient_id) pool.set(idKey(row.ingredient_id), entry);
-    pool.set(nameKey(row.name), entry);
+    pool.set(rowKey(row.id), entry);
+    if (row.ingredient_id) {
+      const k = idKey(row.ingredient_id);
+      const first = pool.get(k);
+      if (first) (first.siblings ??= []).push(entry);
+      else pool.set(k, entry);
+    }
+    const nk = nameKey(row.name);
+    const firstByName = pool.get(nk);
+    if (firstByName && firstByName !== entry) {
+      (firstByName.siblings ??= []).push(entry);
+    } else {
+      pool.set(nk, entry);
+    }
   }
   return pool;
 }
@@ -213,12 +238,12 @@ export async function computePantrySoftReserve(
     });
 
   const pool = buildPantryPool(pantryRows);
+  const recipesCache: { rows?: RecipeRow[] } = {};
 
   for (const plan of plans) {
-    if (!plan.recipe_id) continue;
-    const recipe = await getRecipe(db, userId, plan.recipe_id);
+    const recipe = await resolvePlanRecipe(db, userId, plan, recipesCache);
     if (!recipe) continue;
-    const ingredients = await listRecipeIngredientRows(db, plan.recipe_id);
+    const ingredients = await listRecipeIngredientRows(db, recipe.id);
     allocateIngredientsAgainstPool(ingredients, pool, {
       hasRecipeId: true,
       recipeFound: true,
@@ -236,6 +261,7 @@ export function softReserveFromAllocatedPool(
   return pantryRows.map((row) => {
     const onHand = quantityFromRow(row.quantity);
     const entry =
+      pool.get(rowKey(row.id)) ??
       (row.ingredient_id ? pool.get(idKey(row.ingredient_id)) : undefined) ??
       pool.get(nameKey(row.name));
     const available = entry ? Math.max(0, entry.quantity) : onHand;
@@ -252,21 +278,34 @@ export function softReserveFromAllocatedPool(
   });
 }
 
-function findPoolEntry(
+/** All pantry lots (rows) that match an ingredient by id or normalized name. */
+function findPoolEntries(
   pool: Map<string, PantryPoolEntry>,
   ing: Pick<RecipeIngredientRow, 'ingredient_id' | 'name'>,
-): PantryPoolEntry | null {
-  if (ing.ingredient_id) {
-    const byId = pool.get(idKey(ing.ingredient_id));
-    if (byId) return byId;
-  }
-  return pool.get(nameKey(ing.name)) ?? null;
+): PantryPoolEntry[] {
+  const out: PantryPoolEntry[] = [];
+  const add = (head: PantryPoolEntry | undefined) => {
+    if (!head) return;
+    for (const e of [head, ...(head.siblings ?? [])]) {
+      if (!out.includes(e)) out.push(e);
+    }
+  };
+  if (ing.ingredient_id) add(pool.get(idKey(ing.ingredient_id)));
+  add(pool.get(nameKey(ing.name)));
+  return out;
 }
 
 /** Normalize unit for comparison; empty → pcs. No conversion tables. */
 export function normalizeUnitKey(unit: string | null | undefined): string {
   const t = unit?.trim();
-  return (t ? t : 'pcs').toLowerCase();
+  if (!t) return 'pcs';
+  return canonicalUnit(t) ?? t.toLowerCase();
+}
+
+const EPS = 1e-6;
+
+function roundQty(n: number): number {
+  return Math.round(n * 1000) / 1000;
 }
 
 export function unitsMatch(
@@ -295,23 +334,43 @@ export function allocateIngredientsAgainstPool(
   for (const ing of ingredients ?? []) {
     const needed = quantityFromRow(ing.quantity);
     const unit = ing.unit ?? 'pcs';
-    const entry = findPoolEntry(pool, ing);
+    const lots = findPoolEntries(pool, ing);
+    const idPart = ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {};
 
-    if (!entry) {
-      shortages.push({
-        ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
-        name: ing.name,
-        needed,
-        available: 0,
-        unit,
-      });
+    if (lots.length === 0) {
+      shortages.push({ ...idPart, name: ing.name, needed, available: 0, unit });
       continue;
     }
 
-    if (!unitsMatch(unit, entry.unit)) {
-      // available 0 so shopping deficit = full needed (no silent cross-unit credit)
+    // Same-unit lots first, then lots convertible within weight / volume.
+    let remaining = needed;
+    let compatible = false;
+    const ordered = [
+      ...lots.filter((l) => unitsMatch(unit, l.unit)),
+      ...lots.filter((l) => !unitsMatch(unit, l.unit)),
+    ];
+    for (const lot of ordered) {
+      const inNeedUnit = unitsMatch(unit, lot.unit)
+        ? lot.quantity
+        : standardConvert(lot.quantity, lot.unit, unit);
+      if (inNeedUnit == null) continue;
+      compatible = true;
+      if (remaining <= EPS) continue;
+      const take = Math.min(Math.max(0, inNeedUnit), remaining);
+      if (take <= 0) continue;
+      remaining -= take;
+      if (unitsMatch(unit, lot.unit)) {
+        lot.quantity = Math.max(0, lot.quantity - take);
+      } else {
+        const back = standardConvert(take, unit, lot.unit);
+        lot.quantity = Math.max(0, lot.quantity - (back ?? 0));
+      }
+    }
+
+    if (!compatible) {
+      // available 0 so shopping deficit = full needed (count vs weight etc.)
       shortages.push({
-        ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
+        ...idPart,
         name: ing.name,
         needed,
         available: 0,
@@ -321,17 +380,13 @@ export function allocateIngredientsAgainstPool(
       continue;
     }
 
-    const available = entry.quantity;
-    const useQty = Math.min(available, needed);
-    entry.quantity = available - useQty;
-
-    if (useQty < needed) {
+    if (remaining > EPS) {
       shortages.push({
-        ...(ing.ingredient_id ? { ingredient_id: ing.ingredient_id } : {}),
+        ...idPart,
         name: ing.name,
         needed,
-        available,
-        unit: entry.unit || unit,
+        available: roundQty(needed - remaining),
+        unit,
       });
     }
   }
@@ -342,31 +397,49 @@ export function allocateIngredientsAgainstPool(
   };
 }
 
-/** Sum per-meal shortfalls into a shopping-oriented week list (needed = deficit). */
+/**
+ * Sum per-meal shortfalls into a shopping-oriented week list (needed = deficit).
+ * Same item (normalized name or ingredient id) in convertible units is merged
+ * into the first unit seen, so "eggs 2 pcs" + "eggs 2 pcs" -> 4 pcs.
+ */
 export function aggregateWeekShortages(
   mealShortages: MealConfirmShortage[][],
 ): MealConfirmShortage[] {
-  const map = new Map<string, MealConfirmShortage>();
+  const out: MealConfirmShortage[] = [];
+  const itemKey = (s: MealConfirmShortage) => {
+    const id = s.ingredient_id?.trim();
+    return id ? idKey(id) : nameKey(s.name);
+  };
   for (const list of mealShortages) {
     for (const s of list) {
       const deficit = Math.max(0, s.needed - s.available);
-      if (deficit <= 0) continue;
-      const key = shortageAggKey(s);
-      const existing = map.get(key);
-      if (existing) {
-        existing.needed += deficit;
-      } else {
-        map.set(key, {
+      if (deficit <= EPS) continue;
+      const key = itemKey(s);
+      let merged = false;
+      for (const existing of out) {
+        if (itemKey(existing) !== key && nameKey(existing.name) !== nameKey(s.name)) {
+          continue;
+        }
+        const inExisting = unitsMatch(existing.unit, s.unit)
+          ? deficit
+          : standardConvert(deficit, s.unit, existing.unit);
+        if (inExisting == null) continue;
+        existing.needed = roundQty(existing.needed + inExisting);
+        merged = true;
+        break;
+      }
+      if (!merged) {
+        out.push({
           ...(s.ingredient_id ? { ingredient_id: s.ingredient_id } : {}),
           name: s.name,
-          needed: deficit,
+          needed: roundQty(deficit),
           available: 0,
           unit: s.unit,
         });
       }
     }
   }
-  return [...map.values()];
+  return out;
 }
 
 function isDateInRange(date: string, from: string, to: string): boolean {
@@ -374,6 +447,28 @@ function isDateInRange(date: string, from: string, to: string): boolean {
 }
 
 const ACTIVE_PLAN_STATUSES = new Set(['PLANNED', 'PENDING_CONFIRM']);
+
+/**
+ * Recipe backing a planned meal. Uses recipe_id when it resolves; otherwise
+ * falls back to a case-insensitive meal_name match so meals saved without a
+ * recipe id (e.g. by planMeals) are still checked against the pantry.
+ */
+export async function resolvePlanRecipe(
+  db: D1Database,
+  userId: string,
+  plan: Pick<MealPlanRow, 'recipe_id' | 'meal_name'>,
+  recipesCache?: { rows?: RecipeRow[] },
+): Promise<RecipeRow | null> {
+  if (plan.recipe_id) {
+    const byId = await getRecipe(db, userId, plan.recipe_id);
+    if (byId) return byId;
+  }
+  const name = plan.meal_name?.trim().toLowerCase();
+  if (!name) return null;
+  const rows = recipesCache?.rows ?? (await listRecipes(db, userId));
+  if (recipesCache) recipesCache.rows = rows;
+  return rows.find((r) => r.meal_name.trim().toLowerCase() === name) ?? null;
+}
 
 export async function computeWeekAvailability(
   db: D1Database,
@@ -396,6 +491,7 @@ export async function computeWeekAvailability(
 
   const pool = buildPantryPool(pantryRows);
   const meals: MealAvailabilityEntry[] = [];
+  const recipesCache: { rows?: RecipeRow[] } = {};
   const shortfallLists: MealConfirmShortage[][] = [];
 
   for (const plan of plans) {
@@ -404,18 +500,13 @@ export async function computeWeekAvailability(
       continue;
     }
 
-    if (!plan.recipe_id) {
-      meals.push(mealAvailabilityEntry(plan, 'unknown', []));
-      continue;
-    }
-
-    const recipe = await getRecipe(db, userId, plan.recipe_id);
+    const recipe = await resolvePlanRecipe(db, userId, plan, recipesCache);
     if (!recipe) {
       meals.push(mealAvailabilityEntry(plan, 'unknown', []));
       continue;
     }
 
-    const ingredients = await listRecipeIngredientRows(db, plan.recipe_id);
+    const ingredients = await listRecipeIngredientRows(db, recipe.id);
     const result = allocateIngredientsAgainstPool(ingredients, pool, {
       hasRecipeId: true,
       recipeFound: true,
@@ -610,10 +701,10 @@ export async function confirmMealPlan(
   const shortages: MealConfirmShortage[] = [];
   const deducted: MealConfirmDeducted[] = [];
 
-  if (plan.recipe_id) {
-    const recipe = await getRecipe(db, userId, plan.recipe_id);
+  {
+    const recipe = await resolvePlanRecipe(db, userId, plan);
     if (recipe) {
-      const ingredients = await listRecipeIngredientRows(db, plan.recipe_id);
+      const ingredients = await listRecipeIngredientRows(db, recipe.id);
       for (const ing of ingredients) {
         const needed = quantityFromRow(ing.quantity);
         const unit = ing.unit ?? 'pcs';

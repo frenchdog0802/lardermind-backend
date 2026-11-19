@@ -15,10 +15,15 @@ describe('ingredientInputsFromArgs', () => {
     ]);
   });
 
-  it('does not default non-zero quantity to pcs when unit omitted', () => {
+  it('always yields an app unit: omitted units get a sensible default, invented ones are mapped', () => {
     const out = ingredientInputsFromArgs({
-      ingredients: [{ name: 'oil', quantity: 2 }],
+      ingredients: [
+        { name: 'oil', quantity: 2 },
+        { name: 'bread', quantity: 1, unit: 'loaf' },
+        { name: 'milk', quantity: 1, unit: 'carton' },
+        { name: 'flour', quantity: 250 },
+      ],
     });
-    expect(out[0]?.unit).toBe('');
+    expect(out.map((i) => i.unit)).toEqual(['tbsp', 'pcs', 'l', 'g']);
   });
 });

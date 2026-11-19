@@ -45,6 +45,7 @@ import { executeTool, type ToolExecResult } from './tools/execute';
 import { isMutatingTool, toPendingTools } from './tools/hitl';
 import { validateToolArgs } from './tools/validate-args';
 import { recheckMutatingTargets } from './tools/recheck-targets';
+import { normalizeToolCallArgs } from './tools/normalize-args';
 import { ErrorCodes } from '../lib/error-codes';
 import {
   looksLikeFalseMutationSuccess,
@@ -324,12 +325,14 @@ async function runToolLoop(
     const hasMutating = result.toolCalls.some((tc) => isMutatingTool(tc.name));
     if (hasMutating) {
       const createdAt = nowUnixSeconds();
+      // Units are constrained to the app list before the card is built / stored.
+      const toolCalls = await normalizeToolCallArgs(db, userId, result.toolCalls);
       const pending: PendingInterrupt = {
         createdAt,
         interruptId: crypto.randomUUID(),
         expiresAt: createdAt + HITL_PENDING_TTL_SECONDS,
-        pendingTools: toPendingTools(result.toolCalls),
-        toolCalls: result.toolCalls.map((tc) => ({
+        pendingTools: toPendingTools(toolCalls),
+        toolCalls: toolCalls.map((tc) => ({
           id: tc.id,
           name: tc.name,
           arguments: tc.arguments,
@@ -367,6 +370,114 @@ async function runToolLoop(
       message:
         'I hit a step limit while working on that. Please try a simpler request.',
       data: {},
+    },
+  };
+}
+
+const CONTINUE_AFTER_APPROVAL_NUDGE =
+  'The approved changes above were applied. If the user\'s request still has steps left that need tools (for example scheduling the recipes you just created with planMeals, or adding missing items to the shopping list), call those tools now. Otherwise briefly confirm the outcome for the user without calling tools.';
+const CONTINUE_MAX_ROUNDS = 4;
+
+type ContinueResult =
+  | { kind: 'complete'; response: ChatResponsePayload }
+  | {
+      kind: 'interrupt';
+      message: string;
+      pending: PendingInterrupt;
+      priorCard: { type: string; data: Record<string, unknown> };
+    };
+
+/**
+ * After an approved batch, let the model keep going within the same turn so
+ * multi-step plans (createRecipe -> planMeals) finish without another user
+ * message. Mutating tools still stop at a fresh HITL interrupt; read-only
+ * tools run inline. Guests keep their tool allowlist.
+ */
+async function continueAfterApproval(
+  env: Env,
+  db: D1Database,
+  userId: string,
+  sessionId: string,
+  messages: LlmMessage[],
+  cardEvents: ToolCardEvent[],
+  complete: CompleteChatFn,
+  execute: ExecuteToolFn,
+): Promise<ContinueResult> {
+  const user = await findUserById(db, userId);
+  const isGuest = isGuestUserRow(user ?? null);
+  const tools = isGuest
+    ? cookingToolsForGuest(GUEST_TOOL_ALLOWLIST)
+    : COOKING_TOOLS;
+  const runExecute: ExecuteToolFn = async (database, uid, name, args) => {
+    if (isGuest && !isGuestAllowedTool(name)) {
+      return {
+        content: JSON.stringify({
+          error: 'signup_required',
+          message:
+            'Sign up to save your kitchen and use planning, shopping, or other advanced tools.',
+        }),
+      };
+    }
+    return execute(database, uid, name, args);
+  };
+
+  messages.push({ role: 'user', content: CONTINUE_AFTER_APPROVAL_NUDGE });
+  for (let round = 0; round < CONTINUE_MAX_ROUNDS; round++) {
+    const result = await complete({
+      env,
+      messages,
+      tools,
+      toolChoice: 'auto',
+    });
+
+    if (result.toolCalls.length === 0) {
+      const text =
+        result.content.trim() ||
+        'Done. Let me know if you need anything else.';
+      const card = aggregateCard(cardEvents);
+      return {
+        kind: 'complete',
+        response: { type: card.type, message: text, data: card.data },
+      };
+    }
+
+    messages.push(result.rawAssistantMessage);
+    if (result.toolCalls.some((tc) => isMutatingTool(tc.name))) {
+      const createdAt = nowUnixSeconds();
+      const toolCalls = await normalizeToolCallArgs(db, userId, result.toolCalls);
+      const pending: PendingInterrupt = {
+        createdAt,
+        interruptId: crypto.randomUUID(),
+        expiresAt: createdAt + HITL_PENDING_TTL_SECONDS,
+        pendingTools: toPendingTools(toolCalls),
+        toolCalls: toolCalls.map((tc) => ({
+          id: tc.id,
+          name: tc.name,
+          arguments: tc.arguments,
+        })),
+        messages: messagesToPending(messages),
+      };
+      const drafted = result.content.trim();
+      return {
+        kind: 'interrupt',
+        message: drafted || 'I need your approval before making these changes.',
+        pending,
+        priorCard: aggregateCard(cardEvents),
+      };
+    }
+
+    await appendToolResults(db, userId, messages, result.toolCalls, cardEvents, {
+      execute: runExecute,
+    });
+  }
+
+  const card = aggregateCard(cardEvents);
+  return {
+    kind: 'complete',
+    response: {
+      type: card.type,
+      message: 'Done with the approved changes. Let me know what to do next.',
+      data: card.data,
     },
   };
 }
@@ -551,6 +662,8 @@ export async function runAgentTurn(
         responseType: 'interrupt',
         cardData: {
           sessionId: turn.data.sessionId,
+          interruptId: turn.data.interruptId,
+          expiresAt: turn.data.expiresAt,
           pendingTools: turn.data.pendingTools,
         },
       });
@@ -962,7 +1075,46 @@ export async function resumeAgentTurn(
 
     let response: ChatResponsePayload;
     try {
-      response = await finalizeText(env, messages, cardEvents, complete);
+      if (decision === 'approve') {
+        const continued = await continueAfterApproval(
+          env,
+          db,
+          input.userId,
+          input.sessionId,
+          messages,
+          cardEvents,
+          complete,
+          execute,
+        );
+        if (continued.kind === 'interrupt') {
+          // The model needs another approved step (e.g. planMeals after createRecipe).
+          // Store the new pending interrupt first (claim token still held), then
+          // finish this checkpoint, which releases the claim.
+          await setPendingInterrupt(
+            db,
+            input.userId,
+            input.sessionId,
+            continued.pending,
+          );
+          response = {
+            type: 'interrupt',
+            message: continued.message,
+            data: {
+              sessionId: input.sessionId,
+              interruptId: interruptIdOf(continued.pending),
+              expiresAt: expiresAtOf(continued.pending),
+              pendingTools: continued.pending.pendingTools,
+              ...(continued.priorCard.type !== 'text'
+                ? { priorCard: continued.priorCard }
+                : {}),
+            },
+          };
+        } else {
+          response = continued.response;
+        }
+      } else {
+        response = await finalizeText(env, messages, cardEvents, complete);
+      }
       if (decision === 'reject' && response.type !== 'text') {
         const readOnlyEvents = cardEvents.filter(
           (event) => !isMutatingTool(event.toolName),

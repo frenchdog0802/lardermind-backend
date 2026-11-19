@@ -1,8 +1,10 @@
 import { nowUnixSeconds } from '../lib/time';
 import {
+  deletePantryItem,
   findByIngredientId,
   findByNameCi,
   mergeAddPantryItem,
+  quantityInPantryUnit,
   updatePantryItem,
 } from './pantry';
 
@@ -147,11 +149,18 @@ async function syncPantryOnCheck(
   await mergeAddPantryItem(db, userId, input);
 }
 
+/**
+ * Undo of syncPantryOnCheck. If the check-off created the pantry row (or merged
+ * the full remaining quantity), the quantity reaches zero and the row is
+ * deleted — never leave a "0 pcs" ghost. If it merged into an existing row, the
+ * previous quantity is restored.
+ */
 async function syncPantryOnUncheck(
   db: D1Database,
   userId: string,
   name: string,
   quantity: number,
+  unit: string,
   ingredientId: string | null,
 ): Promise<void> {
   const pantry = await findPantryForShoppingItem(
@@ -163,7 +172,12 @@ async function syncPantryOnUncheck(
   if (!pantry) return;
 
   const available = quantityFromRow(pantry.quantity);
-  const newQty = Math.max(0, available - quantity);
+  const remove = quantityInPantryUnit(quantity, unit, pantry.unit);
+  const newQty = available - remove;
+  if (newQty <= 1e-9) {
+    await deletePantryItem(db, userId, pantry.id);
+    return;
+  }
   await updatePantryItem(db, userId, pantry.id, { quantity: newQty });
 }
 
@@ -515,6 +529,7 @@ export async function unsyncItemsFromPantry(
       userId,
       row.name,
       quantityFromRow(row.quantity),
+      row.unit ?? 'pcs',
       row.ingredient_id,
     );
     await setSyncedFlag(db, userId, id, 0);

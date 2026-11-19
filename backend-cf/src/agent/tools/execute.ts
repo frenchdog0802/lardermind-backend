@@ -1,6 +1,6 @@
 import {
   deletePantryItem,
-  findByNameCi,
+  findPantryByNameLoose,
   getPantryItem,
   mergeAddPantryItem,
   toPantryItemDto,
@@ -16,6 +16,7 @@ import {
   toRecipeDto,
   updateRecipe,
   type RecipeIngredientInput,
+  type RecipeRow,
 } from '../../db/recipe';
 import {
   computePantrySoftReserve,
@@ -24,6 +25,7 @@ import {
   defaultSoftReserveRange,
   listMealPlans,
   normalizeUnitKey,
+  resolvePlanRecipe,
   toMealPlanDto,
   unitsMatch,
   type MealConfirmShortage,
@@ -36,9 +38,15 @@ import {
   upsertPreferences,
 } from '../../db/preferences';
 import {
+  listShoppingListItems,
   mergeAddShoppingListItem,
   toShoppingListItemDto,
 } from '../../db/shopping-list';
+import {
+  ingredientNameKey,
+  normalizeToolUnit,
+  standardConvert,
+} from '../../db/units';
 import {
   convertQuantity,
   findConversion,
@@ -168,10 +176,76 @@ export function shortagesToShoppingItems(
     out.push({
       name,
       quantity: qty,
-      unit: s.unit?.trim() || 'pcs',
+      unit: normalizeToolUnit(name, s.unit, qty),
     });
   }
   return out;
+}
+
+/**
+ * Shortage-only shopping fill for a date range: the same week calculation the
+ * calendar shows (needed minus on-hand, unit- and name-aware), minus what is
+ * already on the unchecked shopping list, so repeating it never double-adds.
+ */
+async function executeAddMealPlanShortages(
+  db: D1Database,
+  userId: string,
+  args: Record<string, unknown>,
+): Promise<ToolExecResult> {
+  const from = asString(args.from).trim();
+  const to = asString(args.to).trim();
+  if (!from || !to || from > to) {
+    return {
+      content: JSON.stringify({
+        error: 'from and to are required and from must be <= to',
+      }),
+    };
+  }
+  const week = await computeWeekAvailability(db, userId, from, to);
+  const wanted = shortagesToShoppingItems(week.weekShortages);
+  const existing = (await listShoppingListItems(db, userId)).filter(
+    (r) => r.checked === 0,
+  );
+
+  const created = [];
+  const skipped: Array<{ name: string; reason: string }> = [];
+  let mergedCount = 0;
+  for (const item of wanted) {
+    const key = ingredientNameKey(item.name);
+    let already = 0;
+    for (const row of existing) {
+      if (ingredientNameKey(row.name) !== key) continue;
+      const qty = Number(row.quantity ?? 0) || 0;
+      const conv =
+        normalizeUnitKey(row.unit) === normalizeUnitKey(item.unit)
+          ? qty
+          : standardConvert(qty, row.unit, item.unit);
+      if (conv != null) already += conv;
+    }
+    const toAdd = Math.round((item.quantity - already) * 1000) / 1000;
+    if (toAdd <= 1e-6) {
+      skipped.push({ name: item.name, reason: 'already_on_list' });
+      continue;
+    }
+    const { item: row, merged } = await mergeAddShoppingListItem(db, userId, {
+      ...item,
+      quantity: toAdd,
+    });
+    if (merged) mergedCount += 1;
+    created.push(toShoppingListItemDto(row));
+  }
+
+  const cardType = TOOL_CARD_TYPES.addMealPlanShortagesToShoppingList!;
+  return {
+    content: JSON.stringify({
+      items: created,
+      mergedCount,
+      skipped,
+      note: 'Only missing quantities (needed minus on hand) were added.',
+    }),
+    cardType,
+    cardData: { items: created, itemsAdded: created.length, mergedCount },
+  };
 }
 
 export type ToolExecResult = {
@@ -205,10 +279,11 @@ function itemListFromArgs(args: Record<string, unknown>): Array<{
     const obj = item as Record<string, unknown>;
     const name = asString(obj.name).trim();
     if (!name) continue;
+    const quantity = asNumber(obj.quantity, 1);
     out.push({
       name,
-      quantity: asNumber(obj.quantity, 1),
-      unit: asString(obj.unit, 'pcs').trim() || 'pcs',
+      quantity,
+      unit: normalizeToolUnit(name, asString(obj.unit), quantity),
     });
   }
   return out;
@@ -231,7 +306,7 @@ async function resolvePantryRow(
   }
   const name = asString(obj.name).trim();
   if (!name) return null;
-  return findByNameCi(db, userId, name);
+  return findPantryByNameLoose(db, userId, name);
 }
 
 async function executeUpdatePantryItems(
@@ -305,8 +380,12 @@ async function executeUpdatePantryItems(
       continue;
     }
 
-    const unit =
-      asString(obj.unit).trim() || row.unit?.trim() || 'pcs';
+    const rawUnit = asString(obj.unit).trim();
+    const unit = rawUnit
+      ? normalizeToolUnit(row.name, rawUnit, newQty)
+      : row.unit?.trim() || normalizeToolUnit(row.name, '', newQty);
+    const unitChanged =
+      unit.toLowerCase() !== (row.unit?.trim() || '').toLowerCase();
     const updated = await updatePantryItem(db, userId, row.id, {
       quantity: newQty,
       unit,
@@ -322,6 +401,8 @@ async function executeUpdatePantryItems(
     results.push({
       ...toPantryItemDto(updated),
       previous_quantity: current,
+      ...(row.unit ? { previous_unit: row.unit } : {}),
+      unit_changed: unitChanged,
       updated: true,
     });
   }
@@ -387,7 +468,7 @@ async function executeRemovePantryItems(
   };
 }
 
-/** Preserve caller units as-is. Do not invent pcs when quantity is set without a unit. */
+/** Recipe ingredient units are mapped onto the app unit list; a missing unit gets a sensible default. */
 export function ingredientInputsFromArgs(
   args: Record<string, unknown>,
 ): RecipeIngredientInput[] {
@@ -400,7 +481,7 @@ export function ingredientInputsFromArgs(
     if (!name) continue;
     const quantity = asNumber(obj.quantity, 0);
     const unitRaw = typeof obj.unit === 'string' ? obj.unit.trim() : '';
-    const unit = unitRaw || (quantity === 0 ? 'pcs' : '');
+    const unit = normalizeToolUnit(name, unitRaw, quantity, 'recipe');
     out.push({
       name,
       quantity,
@@ -564,6 +645,7 @@ async function executePlanMeals(
   const slice = raw.slice(0, PLAN_MEALS_MAX);
   const created: ReturnType<typeof toMealPlanDto>[] = [];
   const errors: Array<{ index: number; error: string }> = [];
+  const recipesCache: { rows?: RecipeRow[] } = {};
 
   for (let i = 0; i < slice.length; i++) {
     const item = slice[i];
@@ -582,14 +664,29 @@ async function executePlanMeals(
       continue;
     }
     let mealName = asString(obj.meal_name).trim();
-    const recipeId = asString(obj.recipe_id).trim() || undefined;
-    if (!mealName && recipeId) {
-      const recipe = await getRecipe(db, userId, recipeId);
-      mealName = recipe?.meal_name ?? '';
+    let recipeId = asString(obj.recipe_id).trim() || undefined;
+    if (recipeId) {
+      const byId = await getRecipe(db, userId, recipeId);
+      if (byId) {
+        if (!mealName) mealName = byId.meal_name;
+      } else {
+        // Hallucinated / stale id: fall back to a name match below.
+        recipeId = undefined;
+      }
     }
     if (!mealName) {
       errors.push({ index: i, error: 'meal_name is required' });
       continue;
+    }
+    if (!recipeId) {
+      // Link by name so the calendar can check the pantry for this meal.
+      const linked = await resolvePlanRecipe(
+        db,
+        userId,
+        { recipe_id: null, meal_name: mealName },
+        recipesCache,
+      );
+      if (linked) recipeId = linked.id;
     }
     try {
       const row = await createMealPlan(db, userId, {
@@ -740,6 +837,8 @@ export async function executeTool(
     }
     case 'planMeals':
       return executePlanMeals(db, userId, args);
+    case 'addMealPlanShortagesToShoppingList':
+      return executeAddMealPlanShortages(db, userId, args);
     case 'addPantryItems': {
       const items = itemListFromArgs(args);
       const added = [];
@@ -859,10 +958,21 @@ export async function executeTool(
         };
       }
       let mealName = asString(args.meal_name).trim();
-      const recipeId = asString(args.recipe_id).trim() || undefined;
-      if (!mealName && recipeId) {
+      let recipeId = asString(args.recipe_id).trim() || undefined;
+      if (recipeId) {
         const recipe = await getRecipe(db, userId, recipeId);
-        mealName = recipe?.meal_name ?? '';
+        if (recipe) {
+          if (!mealName) mealName = recipe.meal_name;
+        } else {
+          recipeId = undefined;
+        }
+      }
+      if (!recipeId && mealName) {
+        const linked = await resolvePlanRecipe(db, userId, {
+          recipe_id: null,
+          meal_name: mealName,
+        });
+        if (linked) recipeId = linked.id;
       }
       const row = await createMealPlan(db, userId, {
         meal_type: mealType,
