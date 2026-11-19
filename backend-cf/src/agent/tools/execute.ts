@@ -639,6 +639,55 @@ async function suggestMealsFromPantry(
   };
 }
 
+/** { [YYYY-MM-DD]: { [meal_type]: dish names } } */
+export type SlotLedger = Record<string, Record<string, string[]>>;
+
+function addToLedger(
+  ledger: SlotLedger,
+  date: string,
+  mealType: string,
+  name: string,
+): void {
+  const day = (ledger[date] ??= {});
+  (day[mealType] ??= []).push(name);
+}
+
+/**
+ * Names already on the calendar (active plans) in the date + meal_type slots
+ * this planMeals call touches, read BEFORE writing, so duplicates can be
+ * reported honestly.
+ */
+async function existingNamesInSlots(
+  db: D1Database,
+  userId: string,
+  entries: unknown[],
+): Promise<SlotLedger> {
+  const slots = new Set<string>();
+  const dates: string[] = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') continue;
+    const obj = entry as Record<string, unknown>;
+    const date = asString(obj.serving_date).trim();
+    const type = asString(obj.meal_type).trim();
+    if (!date || !type) continue;
+    slots.add(`${date}|${type}`);
+    dates.push(date);
+  }
+  const ledger: SlotLedger = {};
+  if (dates.length === 0) return ledger;
+  dates.sort();
+  const rows = await listMealPlans(db, userId, undefined, {
+    from: dates[0],
+    to: dates[dates.length - 1],
+  });
+  for (const row of rows) {
+    if (row.status === 'SKIPPED') continue;
+    if (!slots.has(`${row.serving_date}|${row.meal_type}`)) continue;
+    addToLedger(ledger, row.serving_date, row.meal_type, row.meal_name);
+  }
+  return ledger;
+}
+
 async function executePlanMeals(
   db: D1Database,
   userId: string,
@@ -650,6 +699,7 @@ async function executePlanMeals(
   const created: ReturnType<typeof toMealPlanDto>[] = [];
   const errors: Array<{ index: number; error: string }> = [];
   const recipesCache: { rows?: RecipeRow[] } = {};
+  const existingInSlot = await existingNamesInSlots(db, userId, slice);
 
   for (let i = 0; i < slice.length; i++) {
     const item = slice[i];
@@ -710,16 +760,32 @@ async function executePlanMeals(
 
   const cardType = TOOL_CARD_TYPES.planMeals!;
   const mealsCard = created.map(mealPlanUpdatedCardData);
+  const byDate: SlotLedger = {};
+  for (const plan of created) addToLedger(byDate, plan.serving_date, plan.meal_type, plan.meal_name);
   return {
     content: JSON.stringify({
       created,
       errors,
       truncated,
+      // Ledger: report only what is listed here as scheduled.
+      requested: raw.length,
+      createdCount: created.length,
+      byDate,
+      existingInSlot,
+      ...(errors.length > 0 || created.length < raw.length
+        ? {
+            notSaved: raw.length - created.length,
+            warning:
+              'Not every requested meal was saved. Tell the user exactly which entries failed (see errors / truncated) — do not say everything was scheduled.',
+          }
+        : {}),
       note: 'Soft-reserve only; on-hand pantry unchanged until meal confirm.',
     }),
     cardType,
     cardData: {
       mealsScheduled: created.length,
+      mealsRequested: raw.length,
+      byDate,
       meals: mealsCard,
       ...(created[0] ? mealPlanUpdatedCardData(created[0]) : {}),
     },

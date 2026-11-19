@@ -58,7 +58,32 @@ describe('HITL helpers', () => {
           },
         ],
       }),
-    ).toBe('2 meals (2026-10-15…2026-10-16)');
+    ).toBe('2 meals (2026-10-15…2026-10-16): 2026-10-15 A; 2026-10-16 B');
+  });
+
+  it('planMeals approval lists every proposed dish per date (main + side)', () => {
+    const days = ['2026-11-20', '2026-11-21', '2026-11-22', '2026-11-23', '2026-11-24'];
+    const meals = days.flatMap((d, i) => [
+      { meal_name: `Main ${i + 1}`, meal_type: 'dinner', serving_date: d },
+      { meal_name: `Side ${i + 1}`, meal_type: 'dinner', serving_date: d },
+    ]);
+    const summary = argsSummary('planMeals', { meals });
+    expect(summary).toBe(
+      '10 meals (2026-11-20…2026-11-24): 2026-11-20 Main 1, Side 1; 2026-11-21 Main 2, Side 2; ' +
+        '2026-11-22 Main 3, Side 3; 2026-11-23 Main 4, Side 4; 2026-11-24 Main 5, Side 5',
+    );
+  });
+
+  it('planMeals approval caps the dish list and labels mixed meal types', () => {
+    const meals = Array.from({ length: 15 }, (_, i) => ({
+      meal_name: `Dish ${i}`,
+      meal_type: i % 2 ? 'lunch' : 'dinner',
+      serving_date: `2026-11-${String(10 + Math.floor(i / 2)).padStart(2, '0')}`,
+    }));
+    const summary = argsSummary('planMeals', { meals });
+    expect(summary.startsWith('15 meals (2026-11-10…2026-11-17): 2026-11-10 dinner: Dish 0 / lunch: Dish 1;')).toBe(true);
+    expect(summary.endsWith(' +3 more')).toBe(true);
+    expect(summary).not.toContain('Dish 12');
   });
 
   it('summaries include quantities and date ranges for readable approval cards', () => {
