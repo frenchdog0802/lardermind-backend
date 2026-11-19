@@ -89,6 +89,8 @@ export async function createFolder(
 
 /**
  * Idempotently create default category folders for a user (case-insensitive name match).
+ * Inserts only the missing defaults, in one batch, and returns the merged folder list
+ * (created_at order) without re-reading it.
  */
 export async function ensureDefaultFolders(
   db: D1Database,
@@ -96,13 +98,32 @@ export async function ensureDefaultFolders(
 ): Promise<FolderRow[]> {
   const existing = await listFolders(db, userId);
   const present = new Set(existing.map((f) => f.name.toLowerCase()));
+  const now = nowUnixSeconds();
+  const created: FolderRow[] = [];
   for (const name of DEFAULT_FOLDER_NAMES) {
-    if (!present.has(name.toLowerCase())) {
-      await createFolder(db, userId, { name });
-      present.add(name.toLowerCase());
-    }
+    if (present.has(name.toLowerCase())) continue;
+    present.add(name.toLowerCase());
+    created.push({
+      id: crypto.randomUUID(),
+      user_id: userId,
+      name,
+      icon: '',
+      created_at: now,
+      updated_at: now,
+    });
   }
-  return listFolders(db, userId);
+  if (created.length === 0) return existing;
+  await db.batch(
+    created.map((f) =>
+      db
+        .prepare(
+          `INSERT INTO folders (id, user_id, name, icon, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(f.id, f.user_id, f.name, f.icon, f.created_at, f.updated_at),
+    ),
+  );
+  return [...existing, ...created];
 }
 
 export async function updateFolder(

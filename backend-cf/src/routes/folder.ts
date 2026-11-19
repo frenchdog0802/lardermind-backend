@@ -63,8 +63,10 @@ function parsePatchInput(
 
 folderRoutes.get('/api/folder', async (c) => {
   const userId = c.get('userId');
-  await ensureDefaultFolders(c.env.DB, userId);
-  const rows = await listFolders(c.env.DB, userId, c.req.query('q'));
+  const all = await ensureDefaultFolders(c.env.DB, userId);
+  const q = c.req.query('q');
+  // Unfiltered (the common case): reuse the merged list, no second read.
+  const rows = q?.trim() ? await listFolders(c.env.DB, userId, q) : all;
   return c.json(ok(rows.map(toFolderDto)));
 });
 

@@ -2285,4 +2285,27 @@ describe('launch hardening: batching and query counts', () => {
     await j('/api/meal-plan?from=2026-09-21&to=2026-09-22');
     expect(mock.queries.some((q) => q.includes('serving_date >= ?') && q.includes('serving_date <= ?'))).toBe(true);
   });
+
+  it('GET /api/folder seeds only missing defaults in one batch and skips the second read', async () => {
+    mock.queries.length = 0;
+    mock.batches.length = 0;
+    const first = (await (await j('/api/folder')).json()) as { data: Array<{ name: string }> };
+    expect(first.data.map((f) => f.name)).toEqual([
+      'Uncategorized',
+      'Favorites',
+      'Breakfast',
+      'Lunch',
+      'Dinner',
+    ]);
+    expect(mock.batches).toHaveLength(1);
+    expect(mock.batches[0]).toHaveLength(5);
+    expect(mock.queries.filter((q) => q.includes('SELECT') && q.includes('FROM folders'))).toHaveLength(1);
+
+    mock.queries.length = 0;
+    mock.batches.length = 0;
+    const second = (await (await j('/api/folder')).json()) as { data: unknown[] };
+    expect(second.data).toHaveLength(5);
+    expect(mock.batches).toHaveLength(0);
+    expect(mock.queries.filter((q) => q.includes('FROM folders'))).toHaveLength(1);
+  });
 });
