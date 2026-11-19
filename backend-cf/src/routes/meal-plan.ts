@@ -2,12 +2,14 @@ import { Hono } from 'hono';
 import { fail, ok } from '../lib/api-response';
 import type { Env } from '../env';
 import type { AuthVariables } from '../middleware/auth';
+import { ErrorCodes } from '../lib/error-codes';
 import { requireAuth, requireNonGuest } from '../middleware/auth';
 import {
   computeWeekAvailability,
   confirmMealPlan,
   createMealPlan,
   deleteMealPlan,
+  MealPlanValidationError,
   getMealPlan,
   listMealPlans,
   listPendingConfirmMealPlans,
@@ -159,8 +161,15 @@ mealPlanRoutes.post('/api/meal-plan', async (c) => {
   const parsed = parseCreateInput(body);
   if (!parsed.ok) return c.json(fail(parsed.message), 400);
 
-  const row = await createMealPlan(c.env.DB, userId, parsed.value);
-  return c.json(ok(toMealPlanDto(row)), 201);
+  try {
+    const row = await createMealPlan(c.env.DB, userId, parsed.value);
+    return c.json(ok(toMealPlanDto(row)), 201);
+  } catch (error) {
+    if (error instanceof MealPlanValidationError) {
+      return c.json(fail(error.message, ErrorCodes.VALIDATION_ERROR), 400);
+    }
+    throw error;
+  }
 });
 
 mealPlanRoutes.get('/api/meal-plan/:id', async (c) => {
@@ -181,12 +190,20 @@ mealPlanRoutes.put('/api/meal-plan/:id', async (c) => {
   const parsed = parsePatchInput(body);
   if (!parsed.ok) return c.json(fail(parsed.message), 400);
 
-  const updated = await updateMealPlan(
-    c.env.DB,
-    userId,
-    c.req.param('id'),
-    parsed.value,
-  );
+  let updated;
+  try {
+    updated = await updateMealPlan(
+      c.env.DB,
+      userId,
+      c.req.param('id'),
+      parsed.value,
+    );
+  } catch (error) {
+    if (error instanceof MealPlanValidationError) {
+      return c.json(fail(error.message, ErrorCodes.VALIDATION_ERROR), 400);
+    }
+    throw error;
+  }
   if (!updated) return c.json(fail('Not found'), 404);
   return c.json(ok(toMealPlanDto(updated)));
 });

@@ -639,11 +639,50 @@ export async function getMealPlan(
     .first<MealPlanRow>();
 }
 
+/** A meal-plan write that would leave the row without a usable name. */
+export class MealPlanValidationError extends Error {
+  readonly code = 'validation_error';
+  constructor(message: string) {
+    super(message);
+    this.name = 'MealPlanValidationError';
+  }
+}
+
+export const MEAL_NAME_REQUIRED_MESSAGE =
+  'meal_name is required (or pass the recipe_id of one of your recipes)';
+
+/**
+ * Never store a nameless meal plan: when the given name is empty/whitespace,
+ * take the name of the user's own recipe (user-scoped lookup). Throws
+ * MealPlanValidationError when no name can be resolved.
+ */
+export async function resolveMealPlanName(
+  db: D1Database,
+  userId: string,
+  mealName: string | null | undefined,
+  recipeId: string | null | undefined,
+): Promise<string> {
+  if (typeof mealName === 'string' && mealName.trim()) return mealName;
+  const rid = typeof recipeId === 'string' ? recipeId.trim() : '';
+  if (rid) {
+    const recipe = await getRecipe(db, userId, rid);
+    const fromRecipe = recipe?.meal_name?.trim();
+    if (fromRecipe) return fromRecipe;
+  }
+  throw new MealPlanValidationError(MEAL_NAME_REQUIRED_MESSAGE);
+}
+
 export async function createMealPlan(
   db: D1Database,
   userId: string,
   input: MealPlanInput,
 ): Promise<MealPlanRow> {
+  const mealName = await resolveMealPlanName(
+    db,
+    userId,
+    input.meal_name,
+    input.recipe_id,
+  );
   const id = crypto.randomUUID();
   const now = nowUnixSeconds();
   await db
@@ -658,7 +697,7 @@ export async function createMealPlan(
       input.meal_type,
       input.serving_date,
       input.recipe_id ?? null,
-      input.meal_name ?? '',
+      mealName,
       input.image ?? null,
       input.status ?? 'PLANNED',
       now,
@@ -686,8 +725,12 @@ export async function updateMealPlan(
     patch.recipe_id !== undefined
       ? (patch.recipe_id ?? null)
       : existing.recipe_id;
+  // An explicit (blank) meal_name is resolved from the recipe or rejected;
+  // rows that are not being renamed are left exactly as stored.
   const mealName =
-    patch.meal_name !== undefined ? patch.meal_name : existing.meal_name;
+    patch.meal_name !== undefined
+      ? await resolveMealPlanName(db, userId, patch.meal_name, recipeId)
+      : existing.meal_name;
   const image = patch.image !== undefined ? patch.image : existing.image;
   const status = patch.status !== undefined ? patch.status : existing.status;
   const now = nowUnixSeconds();

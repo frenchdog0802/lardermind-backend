@@ -23,6 +23,8 @@ import {
   computeWeekAvailability,
   createMealPlan,
   defaultSoftReserveRange,
+  MEAL_NAME_REQUIRED_MESSAGE,
+  MealPlanValidationError,
   listMealPlans,
   normalizeUnitKey,
   resolvePlanRecipe,
@@ -976,12 +978,31 @@ export async function executeTool(
         });
         if (linked) recipeId = linked.id;
       }
-      const row = await createMealPlan(db, userId, {
-        meal_type: mealType,
-        serving_date: servingDate,
-        recipe_id: recipeId,
-        meal_name: mealName,
-      });
+      if (!mealName.trim()) {
+        // Missing / invented recipe_id and no name: never write a nameless row.
+        return {
+          content: JSON.stringify({
+            error: MEAL_NAME_REQUIRED_MESSAGE,
+            created: [],
+          }),
+        };
+      }
+      let row;
+      try {
+        row = await createMealPlan(db, userId, {
+          meal_type: mealType,
+          serving_date: servingDate,
+          recipe_id: recipeId,
+          meal_name: mealName,
+        });
+      } catch (error) {
+        if (error instanceof MealPlanValidationError) {
+          return {
+            content: JSON.stringify({ error: error.message, created: [] }),
+          };
+        }
+        throw error;
+      }
       const plan = toMealPlanDto(row);
       const cardType = TOOL_CARD_TYPES.addRecipeToMenu!;
       return {
