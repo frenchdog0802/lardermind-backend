@@ -153,8 +153,17 @@ describe('recipeCreatedCardData', () => {
       recipeId: 'r1',
       recipeName: '燙青菜',
       ingredientCount: 2,
+      ingredients: [{ name: '青菜' }, { name: '鹽' }],
       steps: ['燙熟', '加鹽'],
     });
+    expect(
+      recipeCreatedCardData({
+        id: 'r2',
+        meal_name: 'Rice',
+        ingredients: [{ name: 'Rice', quantity: 300, unit: 'g' }],
+        instructions: [],
+      }).ingredients,
+    ).toEqual([{ name: 'Rice', quantity: 300, unit: 'g' }]);
     expect(
       mealPlanUpdatedCardData({
         id: 'p1',

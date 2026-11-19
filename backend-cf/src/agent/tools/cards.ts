@@ -25,6 +25,18 @@ export function recipeCreatedCardData(recipe: {
     recipeId: recipe.id,
     recipeName: recipe.meal_name,
     ingredientCount: recipe.ingredients.length,
+    ingredients: recipe.ingredients
+      .map((raw) => {
+        const ing = (raw ?? {}) as Record<string, unknown>;
+        return {
+          name: typeof ing.name === 'string' ? ing.name : '',
+          ...(ing.quantity !== undefined && ing.quantity !== null
+            ? { quantity: ing.quantity as string | number }
+            : {}),
+          ...(typeof ing.unit === 'string' && ing.unit ? { unit: ing.unit } : {}),
+        };
+      })
+      .filter((i) => i.name),
     steps: recipe.instructions,
   };
 }
