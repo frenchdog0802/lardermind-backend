@@ -43,7 +43,7 @@ import { GUEST_TOOL_ALLOWLIST, isGuestAllowedTool } from './tools/guest-allowlis
 import { aggregateCard, type ToolCardEvent } from './tools/cards';
 import { executeTool, type ToolExecResult } from './tools/execute';
 import { isMutatingTool, toPendingTools } from './tools/hitl';
-import { validateToolArgs } from './tools/validate-args';
+import { invalidArgsToolContent, validateToolArgs } from './tools/validate-args';
 import { recheckMutatingTargets } from './tools/recheck-targets';
 import { normalizeToolCallArgs } from './tools/normalize-args';
 import { ErrorCodes } from '../lib/error-codes';
@@ -201,6 +201,59 @@ async function appendToolResults(
 
 // note: appendToolResults uses options.execute when provided via runToolLoop
 
+/** Schema errors per mutating tool call id (empty map = every call is valid). */
+function mutatingArgErrors(toolCalls: ParsedToolCall[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const tc of toolCalls) {
+    if (!isMutatingTool(tc.name)) continue;
+    const errors = validateToolArgs(tc.name, tc.arguments);
+    if (errors.length) out.set(tc.id, errors);
+  }
+  return out;
+}
+
+/**
+ * Invalid mutating arguments are caught BEFORE the approval card: the model
+ * gets the validation errors as tool results (so it can correct itself within
+ * the round budget) and no interrupt is stored. Valid mutating calls in the
+ * same batch are not run either (they need approval and must be re-sent with
+ * the fix); read-only calls run as usual so every tool_call id is answered.
+ */
+async function answerInvalidMutatingBatch(
+  db: D1Database,
+  userId: string,
+  messages: LlmMessage[],
+  toolCalls: ParsedToolCall[],
+  errorsById: Map<string, string[]>,
+  cardEvents: ToolCardEvent[],
+  execute: ExecuteToolFn,
+): Promise<void> {
+  for (const tc of toolCalls) {
+    const errors = errorsById.get(tc.id);
+    if (errors) {
+      messages.push({
+        role: 'tool',
+        tool_call_id: tc.id,
+        name: tc.name,
+        content: invalidArgsToolContent(tc.name, errors),
+      });
+    } else if (isMutatingTool(tc.name)) {
+      messages.push({
+        role: 'tool',
+        tool_call_id: tc.id,
+        name: tc.name,
+        content: JSON.stringify({
+          skipped: true,
+          reason:
+            'Not run and not sent for approval: another change in this batch had invalid arguments. Call it again together with the corrected call.',
+        }),
+      });
+    } else {
+      await appendToolResults(db, userId, messages, [tc], cardEvents, { execute });
+    }
+  }
+}
+
 async function finalizeText(
   env: Env,
   messages: LlmMessage[],
@@ -340,6 +393,19 @@ async function runToolLoop(
       const createdAt = nowUnixSeconds();
       // Units are constrained to the app list before the card is built / stored.
       const toolCalls = await normalizeToolCallArgs(db, userId, result.toolCalls);
+      const argErrors = mutatingArgErrors(toolCalls);
+      if (argErrors.size > 0) {
+        await answerInvalidMutatingBatch(
+          db,
+          userId,
+          messages,
+          toolCalls,
+          argErrors,
+          cardEvents,
+          runExecute,
+        );
+        continue;
+      }
       const pending: PendingInterrupt = {
         createdAt,
         interruptId: crypto.randomUUID(),
@@ -459,6 +525,19 @@ async function continueAfterApproval(
     if (result.toolCalls.some((tc) => isMutatingTool(tc.name))) {
       const createdAt = nowUnixSeconds();
       const toolCalls = await normalizeToolCallArgs(db, userId, result.toolCalls);
+      const argErrors = mutatingArgErrors(toolCalls);
+      if (argErrors.size > 0) {
+        await answerInvalidMutatingBatch(
+          db,
+          userId,
+          messages,
+          toolCalls,
+          argErrors,
+          cardEvents,
+          runExecute,
+        );
+        continue;
+      }
       const pending: PendingInterrupt = {
         createdAt,
         interruptId: crypto.randomUUID(),
@@ -1000,6 +1079,8 @@ export async function resumeAgentTurn(
   }));
 
   if (decision === 'approve') {
+    // Safety net: args are validated before the approval card too, but rows
+    // stored before that check (or a schema change) are re-checked here.
     const argErrors = toolCalls.flatMap((tc) =>
       validateToolArgs(tc.name, tc.arguments),
     );

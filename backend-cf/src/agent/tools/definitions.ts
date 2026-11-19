@@ -3,6 +3,11 @@ import { APP_UNITS } from '../../db/units';
 
 /** The only units the app understands; tools map anything else onto these. */
 const UNIT_ENUM = [...APP_UNITS];
+/** YYYY-MM-DD (shape only; written without backslashes so it survives JSON tooling). */
+export const DATE_PATTERN = '^[0-9]{4}-[0-9]{2}-[0-9]{2}$';
+export const MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'];
+/** planMeals cap per call (the executor also truncates to this as a safety net). */
+export const PLAN_MEALS_MAX_ENTRIES = 28;
 const UNIT_RULE =
   'Must be one of the app units: g, kg, oz, lb, ml, l, tsp, tbsp, cup, pcs, clove, can, slice, stalk, bunch. Never invent units (no bottle, carton, loaf, pack). Liquids (milk, oil) use ml or l; bread/eggs/fruit use pcs (bread may use slice); dry goods use g or kg.';
 
@@ -86,14 +91,16 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
         properties: {
           items: {
             type: 'array',
+            minItems: 1,
             items: {
               type: 'object',
               properties: {
                 name: {
                   type: 'string',
+                  minLength: 1,
                   description: 'Item name in the user message language.',
                 },
-                quantity: { type: 'number' },
+                quantity: { type: 'number', exclusiveMinimum: 0 },
                 unit: {
                   type: 'string',
                   enum: UNIT_ENUM,
@@ -181,20 +188,22 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
     function: {
       name: 'addItemsToShoppingList',
       description:
-        'Add items to the shopping list (requires approval). Use name/unit in the same language as the user message.',
+        'Add ad-hoc items the user names to the shopping list (requires approval). For missing meal-plan ingredients use addMealPlanShortagesToShoppingList instead. Use name/unit in the same language as the user message.',
       parameters: {
         type: 'object',
         properties: {
           items: {
             type: 'array',
+            minItems: 1,
             items: {
               type: 'object',
               properties: {
                 name: {
                   type: 'string',
+                  minLength: 1,
                   description: 'Item name in the user message language.',
                 },
-                quantity: { type: 'number' },
+                quantity: { type: 'number', exclusiveMinimum: 0 },
                 unit: {
                   type: 'string',
                   enum: UNIT_ENUM,
@@ -218,7 +227,7 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
       parameters: {
         type: 'object',
         properties: {
-          meal_name: { type: 'string' },
+          meal_name: { type: 'string', minLength: 1 },
           instructions: {
             oneOf: [
               { type: 'string' },
@@ -296,13 +305,17 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
         type: 'object',
         properties: {
           recipe_id: { type: 'string' },
-          meal_name: { type: 'string' },
+          meal_name: {
+            type: 'string',
+            description: 'Dish name. Required unless recipe_id is given.',
+          },
           meal_type: {
             type: 'string',
-            enum: ['breakfast', 'lunch', 'dinner', 'snack'],
+            enum: MEAL_TYPES,
           },
           serving_date: {
             type: 'string',
+            pattern: DATE_PATTERN,
             description:
               'YYYY-MM-DD. For 今天/today use the local calendar date from the system prompt.',
           },
@@ -322,16 +335,23 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
         properties: {
           meals: {
             type: 'array',
+            minItems: 1,
+            maxItems: PLAN_MEALS_MAX_ENTRIES,
             items: {
               type: 'object',
               properties: {
-                meal_name: { type: 'string' },
+                meal_name: {
+                  type: 'string',
+                  minLength: 1,
+                  description: 'One dish (main, side, or soup) — never several dishes merged.',
+                },
                 meal_type: {
                   type: 'string',
-                  enum: ['breakfast', 'lunch', 'dinner', 'snack'],
+                  enum: MEAL_TYPES,
                 },
                 serving_date: {
                   type: 'string',
+                  pattern: DATE_PATTERN,
                   description: 'YYYY-MM-DD',
                 },
                 recipe_id: { type: 'string' },
@@ -353,8 +373,8 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
       parameters: {
         type: 'object',
         properties: {
-          from: { type: 'string', description: 'YYYY-MM-DD' },
-          to: { type: 'string', description: 'YYYY-MM-DD' },
+          from: { type: 'string', pattern: DATE_PATTERN, description: 'YYYY-MM-DD' },
+          to: { type: 'string', pattern: DATE_PATTERN, description: 'YYYY-MM-DD' },
         },
         required: ['from', 'to'],
         additionalProperties: false,
@@ -370,8 +390,8 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
       parameters: {
         type: 'object',
         properties: {
-          from: { type: 'string', description: 'YYYY-MM-DD' },
-          to: { type: 'string', description: 'YYYY-MM-DD' },
+          from: { type: 'string', pattern: DATE_PATTERN, description: 'YYYY-MM-DD' },
+          to: { type: 'string', pattern: DATE_PATTERN, description: 'YYYY-MM-DD' },
         },
         required: ['from', 'to'],
         additionalProperties: false,

@@ -64,6 +64,7 @@ import {
   type DefineUnitAction,
 } from './cards';
 import { normalizeName } from './names';
+import { PLAN_MEALS_MAX_ENTRIES } from './definitions';
 import {
   classifyCookStatus,
   conditionalSeasonings,
@@ -164,7 +165,7 @@ export function matchIngredientAgainstStock(opts: {
   return { matched: false, partial: false, unitMismatch: null };
 }
 
-const PLAN_MEALS_MAX = 28;
+const PLAN_MEALS_MAX = PLAN_MEALS_MAX_ENTRIES;
 
 /** Map availability shortages to shopping-list item inputs. */
 export function shortagesToShoppingItems(
