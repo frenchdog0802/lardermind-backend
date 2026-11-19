@@ -1,5 +1,5 @@
 import { nowUnixSeconds } from '../lib/time';
-import { namesMatch } from './units';
+import { canonicalUnit, namesMatch, standardConvert } from './units';
 
 export type PantryItemRow = {
   id: string;
@@ -193,6 +193,21 @@ export async function updatePantryItem(
   return getPantryItem(db, userId, id);
 }
 
+/**
+ * Quantity expressed in the pantry row's unit. Convertible units (kg -> g, l -> ml)
+ * are converted; anything else is used as-is (legacy behaviour for count vs weight).
+ */
+export function quantityInPantryUnit(
+  quantity: number,
+  fromUnit: string | null | undefined,
+  pantryUnit: string | null | undefined,
+): number {
+  const from = canonicalUnit(fromUnit);
+  const to = canonicalUnit(pantryUnit);
+  if (!from || !to || from === to) return quantity;
+  return standardConvert(quantity, from, to) ?? quantity;
+}
+
 export async function deletePantryItem(
   db: D1Database,
   userId: string,
@@ -219,8 +234,11 @@ export async function mergeAddPantryItem(
 
   const existingQty = quantityFromRow(existing.quantity);
   const unit = existing.unit?.trim() ? existing.unit : input.unit || 'pcs';
+  const addQty = existing.unit?.trim()
+    ? quantityInPantryUnit(input.quantity, input.unit, existing.unit)
+    : input.quantity;
   const updated = await updatePantryItem(db, userId, existing.id, {
-    quantity: existingQty + input.quantity,
+    quantity: existingQty + addQty,
     unit,
   });
   if (!updated) {

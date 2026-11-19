@@ -1077,7 +1077,8 @@ describe('domain CRUD routes', () => {
     const pantryAfterUnsyncBody = (await pantryAfterUnsync.json()) as {
       data: Array<{ quantity: number }>;
     };
-    expect(pantryAfterUnsyncBody.data[0].quantity).toBe(0);
+    // Undo removes the row the check-off created: no "0 pcs" ghost row.
+    expect(pantryAfterUnsyncBody.data).toEqual([]);
   });
 
   it('creating a shopping item already checked does not sync until batch', async () => {
