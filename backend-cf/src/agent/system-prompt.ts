@@ -88,6 +88,10 @@ export function resolveTodayLocalDate(
 export const UI_GLOSSARY: Record<ChatLanguage, Record<string, string>> = {
   en: { Calendar: 'Calendar', Pantry: 'Pantry', 'Shopping list': 'Shopping list', Recipes: 'Recipes' },
   zh: { Calendar: '行事曆', Pantry: '庫存', 'Shopping list': '購物清單', Recipes: '食譜' },
+  es: { Calendar: 'Calendario', Pantry: 'Despensa', 'Shopping list': 'Lista de compras', Recipes: 'Recetas' },
+  fr: { Calendar: 'Calendrier', Pantry: 'Garde-manger', 'Shopping list': 'Liste de courses', Recipes: 'Recettes' },
+  de: { Calendar: 'Kalender', Pantry: 'Vorrat', 'Shopping list': 'Einkaufsliste', Recipes: 'Rezepte' },
+  ja: { Calendar: 'カレンダー', Pantry: 'パントリー', 'Shopping list': '買い物リスト', Recipes: 'レシピ' },
 };
 
 export function buildUiGlossaryLine(language: ChatLanguage): string {

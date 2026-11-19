@@ -19,9 +19,35 @@ describe('normalizeChatLanguage', () => {
   });
 
   it('ignores missing or unknown values', () => {
-    for (const tag of [undefined, null, '', 'fr', 'japanese', 'zhx', 'eng', 42]) {
+    for (const tag of [undefined, null, '', 'it', 'japanese', 'zhx', 'eng', 'frx', 42]) {
       expect(normalizeChatLanguage(tag)).toBeUndefined();
     }
+  });
+
+  it('accepts es / fr / de / ja and their locale tags', () => {
+    expect(normalizeChatLanguage('es')).toBe('es');
+    expect(normalizeChatLanguage('es-MX')).toBe('es');
+    expect(normalizeChatLanguage('FR_ca')).toBe('fr');
+    expect(normalizeChatLanguage('de-AT')).toBe('de');
+    expect(normalizeChatLanguage('ja')).toBe('ja');
+    expect(normalizeChatLanguage('ja-JP')).toBe('ja');
+  });
+
+  it('resolves an explicit new-language tag over detection', () => {
+    expect(resolveChatLanguage('fr', ['Plan five dinners'])).toBe('fr');
+    expect(resolveChatLanguage('ja-JP', ['幫我規劃晚餐'])).toBe('ja');
+  });
+
+  it('has a server string for every language and key', () => {
+    for (const lang of ['en', 'zh', 'es', 'fr', 'de', 'ja'] as const) {
+      for (const key of ['approvalNeeded', 'pendingReminder', 'meals', 'more', 'remove', 'update', 'on', 'items', 'updates', 'missingIngredients', 'updatePreferences', 'recipe', 'meal'] as const) {
+        expect(t(key, lang).length, `${lang}.${key}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('detects Japanese by kana', () => {
+    expect(detectMessageLanguage('今日の夕食を計画して')).toBe('ja');
   });
 });
 

@@ -9,7 +9,7 @@ type StreamChatInput = {
   message: string;
   clientLocalDate?: string;
   isGuest?: boolean;
-  /** Optional client reply language ('zh' | 'en' | locale tag). */
+  /** Optional client reply language (language tag). */
   language?: string;
 };
 
