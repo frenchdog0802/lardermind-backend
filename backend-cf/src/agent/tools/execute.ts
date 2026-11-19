@@ -706,6 +706,12 @@ async function executePlanMeals(
     }
   }
 
+  // Per-slot counts let the model check the saved schedule against what it proposed
+  // (e.g. main + side = 2 dishes on a day) and report any gap instead of glossing over it.
+  const perSlot: Record<string, string[]> = {};
+  for (const m of created) {
+    (perSlot[`${m.serving_date} ${m.meal_type}`] ??= []).push(m.meal_name);
+  }
   const cardType = TOOL_CARD_TYPES.planMeals!;
   const mealsCard = created.map(mealPlanUpdatedCardData);
   return {
@@ -713,7 +719,8 @@ async function executePlanMeals(
       created,
       errors,
       truncated,
-      note: 'Soft-reserve only; on-hand pantry unchanged until meal confirm.',
+      savedBySlot: perSlot,
+      note: 'Every entry you sent was saved as its own calendar row (several dishes per day are fine). Soft-reserve only; on-hand pantry unchanged until meal confirm.',
     }),
     cardType,
     cardData: {
@@ -975,6 +982,14 @@ export async function executeTool(
           meal_name: mealName,
         });
         if (linked) recipeId = linked.id;
+      }
+      if (!mealName) {
+        return {
+          content: JSON.stringify({
+            error:
+              'meal_name is required (or a recipe_id that resolves to a saved recipe)',
+          }),
+        };
       }
       const row = await createMealPlan(db, userId, {
         meal_type: mealType,
