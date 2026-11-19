@@ -69,6 +69,17 @@ export function buildOpenApiDocument() {
           },
         },
       },
+      '/api/auth/account': {
+        delete: {
+          operationId: 'deleteAccount',
+          description:
+            'Soft-deletes the authenticated account (guests included). Frees the email / Google id for re-signup and invalidates the token. Response: { success: true, message: "Account deleted", data: null }.',
+          responses: {
+            '200': { description: 'Account deleted', content: { 'application/json': { schema: okSchema } } },
+            '401': { description: 'Missing, invalid or already-deleted account', content: { 'application/json': { schema: errorSchema } } },
+          },
+        },
+      },
       '/api/auth/google-login': {
         post: {
           operationId: 'googleLogin',

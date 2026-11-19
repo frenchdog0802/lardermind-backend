@@ -18,6 +18,9 @@ export type UserRow = {
   updated_at: number | null;
   is_guest?: number | null;
   expires_at?: number | null;
+  deleted_at?: number | null;
+  deleted_email?: string | null;
+  deleted_google_id?: string | null;
 };
 
 export type AuthUserDto = {
@@ -43,7 +46,7 @@ export async function findUserByEmail(
   email: string,
 ): Promise<UserRow | null> {
   return db
-    .prepare('SELECT * FROM users WHERE email = ? LIMIT 1')
+    .prepare('SELECT * FROM users WHERE email = ? AND deleted_at IS NULL LIMIT 1')
     .bind(email)
     .first<UserRow>();
 }
@@ -52,7 +55,7 @@ export async function findUserById(
   db: D1Database,
   id: string,
 ): Promise<UserRow | null> {
-  return db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').bind(id).first<UserRow>();
+  return db.prepare('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1').bind(id).first<UserRow>();
 }
 
 export async function findUserByGoogleId(
@@ -60,7 +63,7 @@ export async function findUserByGoogleId(
   googleId: string,
 ): Promise<UserRow | null> {
   return db
-    .prepare('SELECT * FROM users WHERE google_id = ? LIMIT 1')
+    .prepare('SELECT * FROM users WHERE google_id = ? AND deleted_at IS NULL LIMIT 1')
     .bind(googleId)
     .first<UserRow>();
 }
@@ -250,4 +253,33 @@ let dummyHashCache: Promise<string> | null = null;
 function dummyPasswordHash(): Promise<string> {
   dummyHashCache ??= hashPassword('lardermind-dummy-password');
   return dummyHashCache;
+}
+
+/**
+ * Soft-delete an account: mark `deleted_at`, free the email / google identifier (placeholder
+ * email, originals kept in `deleted_*`), drop credentials and burn outstanding reset tokens.
+ * Data rows are kept. Returns false when the user is unknown or already deleted.
+ */
+export async function softDeleteUser(
+  db: D1Database,
+  userId: string,
+  now = nowUnixSeconds(),
+): Promise<boolean> {
+  const placeholder = `deleted-${userId}@deleted.lardermind.local`;
+  const results = await db.batch([
+    db
+      .prepare(
+        `UPDATE users SET deleted_at = ?, deleted_email = email, deleted_google_id = google_id,
+           email = ?, google_id = NULL, hashed_password = NULL, salt = NULL, updated_at = ?
+         WHERE id = ? AND deleted_at IS NULL`,
+      )
+      .bind(now, placeholder, now, userId),
+    db
+      .prepare(
+        `UPDATE password_reset_tokens SET used_at = ?
+         WHERE user_id = ? AND used_at IS NULL`,
+      )
+      .bind(now, userId),
+  ]);
+  return (results[0]?.meta?.changes ?? 0) > 0;
 }

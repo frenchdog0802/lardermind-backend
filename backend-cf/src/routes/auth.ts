@@ -24,6 +24,7 @@ import {
   createUser,
   findUserById,
   signInUser,
+  softDeleteUser,
   toAuthUserDto,
   upsertGoogleUser,
 } from '../db/users';
@@ -260,6 +261,16 @@ authRoutes.post('/api/auth/claim-guest', requireAuth, async (c) => {
     const message = error instanceof Error ? error.message : 'Claim failed';
     return c.json(fail(message), 400);
   }
+});
+
+authRoutes.delete('/api/auth/account', requireAuth, async (c) => {
+  // Soft delete (App Store 5.1.1(v)); works for guests too. A second call with the same
+  // token is rejected by requireAuth (401) because the user is already deleted.
+  const deleted = await softDeleteUser(c.env.DB, c.get('userId'));
+  if (!deleted) {
+    return c.json(fail('Invalid token', ErrorCodes.UNAUTHORIZED), 401);
+  }
+  return c.json({ success: true, message: 'Account deleted', data: null });
 });
 
 authRoutes.post('/api/auth/purge-expired-guests', async (c) => {

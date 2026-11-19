@@ -31,7 +31,8 @@ export async function requireAuth(
   try {
     const { userId, isGuest } = await verifyJwt(token, c.env.JWT_SECRET);
     const user = await findUserById(c.env.DB, userId);
-    if (!user) {
+    if (!user || user.deleted_at != null) {
+      // Unknown or soft-deleted account: the token no longer grants access.
       return c.json({ success: false, message: 'Invalid token' }, 401);
     }
     if (isGuest || isGuestUserRow(user)) {

@@ -138,7 +138,7 @@ export async function claimGuestKitchen(
   }
 
   const guest = await db
-    .prepare('SELECT * FROM users WHERE id = ? LIMIT 1')
+    .prepare('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1')
     .bind(guestUserId)
     .first<UserRow>();
   if (!guest || !isGuestUserRow(guest)) {
