@@ -223,6 +223,41 @@ subscriptionRoutes.post(
   }
 });
 
+subscriptionRoutes.post(
+  '/api/subscription/confirm',
+  requireAuth,
+  requireNonGuest,
+  async (c) => {
+    if (!c.env.STRIPE_SECRET_KEY) {
+      return c.json(fail('Stripe is not configured'), 503);
+    }
+    const userId = c.get('userId');
+    const body = (await c.req.json().catch(() => ({}))) as { sessionId?: unknown };
+    const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+    if (!/^cs_[A-Za-z0-9_]+$/.test(sessionId)) {
+      return c.json(fail('sessionId is required'), 400);
+    }
+    try {
+      const result = await confirmCheckoutSession(c.env, userId, sessionId);
+      if (result.kind === 'forbidden') return c.json(fail('Checkout session not found'), 404);
+      if (result.kind === 'invalid') return c.json(fail('Not a subscription checkout session'), 400);
+      const user = await findUserById(c.env.DB, userId);
+      const entitlement = await resolveEntitlement(c.env.DB, userId, user?.role);
+      return c.json(
+        ok({
+          activated: result.kind === 'activated',
+          isPro: entitlement.isPro,
+          isTrial: entitlement.isTrial,
+          status: entitlement.status,
+        }),
+      );
+    } catch (error) {
+      console.error('checkout confirm failed', error);
+      return c.json(fail('Unable to confirm checkout'), 502);
+    }
+  },
+);
+
 subscriptionRoutes.post('/api/subscription/webhook', async (c) => {
   if (!c.env.STRIPE_SECRET_KEY || !c.env.STRIPE_WEBHOOK_SECRET) {
     return c.json(fail('Stripe webhook is not configured'), 503);
@@ -294,6 +329,42 @@ async function createPortalSessionUrl(
     throw new Error('Portal session missing url');
   }
   return session.url;
+}
+
+export type ConfirmCheckoutResult =
+  | { kind: 'activated' }
+  | { kind: 'pending' }
+  | { kind: 'forbidden' }
+  | { kind: 'invalid' };
+
+/**
+ * Server-side verification of a Checkout Session (used on return from Stripe, in addition to
+ * webhooks). A $0 trial checkout finishes with status=complete and
+ * payment_status=no_payment_required, so we accept both `paid` and `no_payment_required`.
+ */
+export async function confirmCheckoutSession(
+  env: Env,
+  userId: string,
+  sessionId: string,
+): Promise<ConfirmCheckoutResult> {
+  const stripe = getStripe(env);
+  const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+  const owner = session.client_reference_id || session.metadata?.userId || null;
+  if (owner !== userId) return { kind: 'forbidden' };
+  if (session.mode !== 'subscription') return { kind: 'invalid' };
+
+  const paid =
+    session.payment_status === 'paid' || session.payment_status === 'no_payment_required';
+  if (session.status !== 'complete' || !paid) return { kind: 'pending' };
+
+  const subscriptionId =
+    typeof session.subscription === 'string' ? session.subscription : session.subscription?.id;
+  if (!subscriptionId) return { kind: 'pending' };
+
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  await syncSubscription(env, subscription, userId);
+  return { kind: 'activated' };
 }
 
 async function handleStripeEvent(env: Env, event: Stripe.Event): Promise<void> {

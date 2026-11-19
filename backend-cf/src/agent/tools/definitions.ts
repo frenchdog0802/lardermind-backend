@@ -343,7 +343,7 @@ export const COOKING_TOOLS: LlmToolDefinition[] = [
                 meal_name: {
                   type: 'string',
                   minLength: 1,
-                  description: 'One dish (main, side, or soup) — never several dishes merged.',
+                  description: 'One dish (main, side, or soup) — never several dishes merged and never alternatives (no "or").',
                 },
                 meal_type: {
                   type: 'string',

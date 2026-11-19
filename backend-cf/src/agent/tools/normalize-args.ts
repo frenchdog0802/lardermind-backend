@@ -13,6 +13,38 @@ function num(v: unknown, fallback: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
 }
 
+
+const ALTERNATIVE_SEPARATOR = /\s*[,;(]?\s+or\s+/i;
+
+/**
+ * A meal slot holds exactly one dish per entry. If the model writes alternatives into a single
+ * dish name ("Buttered Carrots, or Sliced Tomato Salad if you have tomatoes"), keep the first
+ * alternative only so approval never fans out into several recipes / calendar rows.
+ */
+export function pickDishAlternative(name: string): string {
+  const trimmed = name.trim();
+  const first = trimmed.split(ALTERNATIVE_SEPARATOR)[0]?.trim().replace(/[,;(]+$/, '').trim();
+  return first || trimmed;
+}
+
+function normalizePlanMealEntries(meals: unknown[]): unknown[] {
+  const seen = new Set<string>();
+  const out: unknown[] = [];
+  for (const raw of meals) {
+    const entry = asRecord(raw);
+    if (!entry || typeof entry.meal_name !== 'string') {
+      out.push(raw);
+      continue;
+    }
+    const meal_name = pickDishAlternative(entry.meal_name);
+    const key = `${entry.serving_date}|${entry.meal_type}|${meal_name.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...entry, meal_name });
+  }
+  return out;
+}
+
 /**
  * Constrain units to the app unit list BEFORE the approval card is built and the
  * pending call is stored, so the card shows (and approval applies) the real unit:
@@ -82,10 +114,15 @@ export async function normalizeToolCallArgs<T extends ToolCallLike>(
         mapped.push({ ...item, unit });
       }
       next = { ...args, items: mapped };
+    } else if (call.name === 'planMeals' && Array.isArray(args.meals)) {
+      next = { ...args, meals: normalizePlanMealEntries(args.meals) };
     } else if (call.name === 'createRecipe' || call.name === 'updateRecipe') {
+      if (typeof args.meal_name === 'string' && call.name === 'createRecipe') {
+        next = { ...args, meal_name: pickDishAlternative(args.meal_name) };
+      }
       if (Array.isArray(args.ingredients)) {
         next = {
-          ...args,
+          ...(next ?? args),
           ingredients: args.ingredients.map((raw) => {
             const ing = asRecord(raw);
             if (!ing) return raw;
