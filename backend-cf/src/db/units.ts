@@ -189,12 +189,102 @@ export function ingredientNameKey(name: string | null | undefined): string {
     .replace(/\([^)]*\)/g, ' ')
     .replace(/[,;]+/g, ' ')
     .trim();
-  const tokens = base
+  let tokens = base
     .split(/\s+/)
     .filter(Boolean)
     .filter((t) => !NAME_NOISE.has(t))
     .map(singularToken);
+  // "cooked rice" / "dry pasta" are the same staple as "rice" / "pasta".
+  if (stapleOf(tokens) != null) {
+    tokens = tokens.filter((t) => !COOK_STATE_TOKENS.has(t));
+  }
   return tokens.join(' ');
+}
+
+// ---------------------------------------------------------------------------
+// Cooked vs dry staples (rice, pasta, ...): one item, converted by weight ratio
+// ---------------------------------------------------------------------------
+
+const COOKED_TOKENS = new Set(['cooked']);
+const DRY_TOKENS = new Set(['dry', 'dried', 'uncooked', 'raw']);
+const COOK_STATE_TOKENS = new Set([...COOKED_TOKENS, ...DRY_TOKENS]);
+
+/** dry weight per 1 unit of cooked weight (200 g dry rice ~ 600 g cooked => 1/3). */
+const COOKED_TO_DRY: Array<[string, number]> = [
+  ['rice', 1 / 3],
+  ['quinoa', 1 / 3],
+  ['pasta', 1 / 2.25],
+  ['spaghetti', 1 / 2.25],
+  ['macaroni', 1 / 2.25],
+  ['penne', 1 / 2.25],
+  ['noodle', 1 / 2.25],
+  ['couscous', 1 / 2.5],
+  ['oat', 1 / 2.5],
+  ['oatmeal', 1 / 2.5],
+  ['bean', 1 / 2.5],
+  ['lentil', 1 / 2.5],
+  ['chickpea', 1 / 2.5],
+  ['barley', 1 / 3],
+];
+
+function stapleOf(tokens: string[]): number | null {
+  for (const t of tokens) {
+    const hit = COOKED_TO_DRY.find(([w]) => w === singularToken(t));
+    if (hit) return hit[1];
+  }
+  return null;
+}
+
+/** 'cooked' | 'dry' for a staple name; null when the name is not a staple or has no state word. */
+export function cookState(name: string | null | undefined): 'cooked' | 'dry' | null {
+  const tokens = (name ?? '')
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .split(/[\s,;]+/)
+    .filter(Boolean);
+  if (stapleOf(tokens.map(singularToken)) == null) return null;
+  if (tokens.some((t) => COOKED_TOKENS.has(t))) return 'cooked';
+  if (tokens.some((t) => DRY_TOKENS.has(t))) return 'dry';
+  return null;
+}
+
+/**
+ * Multiplier turning a quantity of `fromName` into the same food measured as `toName`
+ * (weight/volume only). Unstated state counts as dry/raw. 1 when states agree or the
+ * item is not a known staple. 200 g "rice" -> 600 g "cooked rice" (x3).
+ */
+export function cookedStateFactor(
+  fromName: string | null | undefined,
+  toName: string | null | undefined,
+): number {
+  const f = cookState(fromName) ?? 'dry';
+  const t = cookState(toName) ?? 'dry';
+  if (f === t) return 1;
+  const tokens = `${fromName ?? ''} ${toName ?? ''}`
+    .toLowerCase()
+    .split(/[\s,;]+/)
+    .map(singularToken);
+  const dryPerCooked = stapleOf(tokens);
+  if (dryPerCooked == null) return 1;
+  return f === 'dry' ? 1 / dryPerCooked : dryPerCooked;
+}
+
+/**
+ * convertQty between two *named* items: unit conversion plus the cooked <-> dry ratio.
+ * Count units do not take the cooked factor. Null when not convertible.
+ */
+export function convertQtyBetweenItems(
+  qty: number,
+  fromUnit: string | null | undefined,
+  toUnit: string | null | undefined,
+  fromName: string | null | undefined,
+  toName: string | null | undefined,
+): number | null {
+  const factor = cookedStateFactor(fromName, toName);
+  const same = canonicalUnit(fromUnit) === canonicalUnit(toUnit);
+  const base = same ? qty : convertQty(qty, fromUnit, toUnit, toName ?? fromName);
+  if (base == null) return null;
+  return unitKind(toUnit) === 'count' ? base : base * factor;
 }
 
 export function namesMatch(
