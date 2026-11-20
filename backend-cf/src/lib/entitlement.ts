@@ -17,6 +17,9 @@ export type Entitlement = {
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
   hasHadSubscription: boolean;
+  /** Which store grants Pro right now (null when not Pro via a paid subscription). */
+  source: 'stripe' | 'apple' | null;
+  appleOriginalTransactionId: string | null;
 };
 
 export const GUEST_TIER = {

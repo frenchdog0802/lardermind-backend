@@ -5,6 +5,7 @@ import {
   type Entitlement,
 } from '../lib/entitlement';
 import type { BillingPeriod } from '../lib/stripe';
+import { listAppleSubscriptionsForUser, pickAppleRow } from './apple-subscriptions';
 
 export type SubscriptionRow = {
   user_id: string;
@@ -189,21 +190,32 @@ export async function resolveEntitlement(
 ): Promise<Entitlement> {
   const isAdmin = role === 'admin';
   const row = await getSubscriptionByUserId(db, userId);
-  const status = row?.status ?? 'none';
-  const entitled = isEntitled(status);
+  const stripeStatus = row?.status ?? 'none';
+  const stripeEntitled = isEntitled(stripeStatus);
+
+  // Web (Stripe) and iOS (App Store) Pro are the same plan: Pro if either source is entitled.
+  const apple = pickAppleRow(await listAppleSubscriptionsForUser(db, userId));
+  const useApple = !stripeEntitled && apple.entitled && apple.row != null;
+  const a = apple.row;
+
+  const status = useApple ? a!.status : stripeStatus;
+  const entitled = stripeEntitled || useApple;
+  const billingPeriod = useApple ? a!.billing_period : (row?.billing_period ?? null);
 
   return {
     isPro: isAdmin || entitled,
     isTrial: status === 'trialing',
     isAdmin,
     status,
-    trialEndsAt: row?.trial_end ?? null,
-    expiresAt: row?.current_period_end ?? null,
-    planName: entitled ? planNameForBillingPeriod(row?.billing_period) : null,
-    billingPeriod: row?.billing_period ?? null,
+    trialEndsAt: useApple ? (a!.trial_end ?? null) : (row?.trial_end ?? null),
+    expiresAt: useApple ? (a!.expires_at ?? null) : (row?.current_period_end ?? null),
+    planName: entitled ? planNameForBillingPeriod(billingPeriod) : null,
+    billingPeriod,
     stripeCustomerId: row?.stripe_customer_id ?? null,
     stripeSubscriptionId: row?.stripe_subscription_id ?? null,
-    hasHadSubscription: Boolean(row?.stripe_subscription_id),
+    hasHadSubscription: Boolean(row?.stripe_subscription_id) || a != null,
+    source: stripeEntitled ? 'stripe' : useApple ? 'apple' : null,
+    appleOriginalTransactionId: a?.original_transaction_id ?? null,
   };
 }
 

@@ -114,6 +114,10 @@ function createMockDb(users: Record<string, { role: string }>) {
           }
           return null;
         },
+        async all<T>() {
+          // e.g. apple_subscriptions lookup in resolveEntitlement: no rows.
+          return { results: [] as T[], success: true };
+        },
         async run() {
           if (sql.includes('INSERT INTO usage_quotas')) {
             const userId = bound[1] as string;
