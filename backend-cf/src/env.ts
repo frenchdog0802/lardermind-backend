@@ -38,6 +38,10 @@ export type Env = {
   STRIPE_PRICE_MONTHLY?: string;
   /** Stripe Price ID for Pro yearly. */
   STRIPE_PRICE_YEARLY?: string;
+  /** iOS bundle id accepted in Apple signed transactions (default com.lardermind.app). */
+  APPLE_BUNDLE_ID?: string;
+  /** Comma list of accepted App Store environments (default "Production,Sandbox"). */
+  APPLE_ALLOWED_ENVIRONMENTS?: string;
   /** Resend API key (secret). Mail no-ops (logged) when unset. */
   RESEND_API_KEY?: string;
   /** Verified sender, e.g. `LarderMind <no-reply@lardermind.com>`. Mail no-ops when unset. */

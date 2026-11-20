@@ -72,21 +72,14 @@ subscriptionRoutes.get('/api/subscription/plans', (c) =>
   ),
 );
 
-subscriptionRoutes.get(
-  '/api/subscription/status',
-  requireAuth,
-  requireNonGuest,
-  async (c) => {
-  const userId = c.get('userId');
-  const user = await findUserById(c.env.DB, userId);
-  if (!user) {
-    return c.json(fail('User not found'), 401);
-  }
+export type SubscriptionStatusBody = Awaited<ReturnType<typeof buildSubscriptionStatus>>;
 
-  const entitlement = await resolveEntitlement(c.env.DB, userId, user.role);
-  const ai = await getAiUsageForStatus(c.env.DB, userId);
-  const image = await getImageUsageForStatus(c.env.DB, userId);
-  const recipeCount = await countRecipes(c.env.DB, userId);
+/** Status payload shared by GET /status and the iOS validate-receipt / sync responses. */
+export async function buildSubscriptionStatus(env: Env, userId: string, role?: string | null) {
+  const entitlement = await resolveEntitlement(env.DB, userId, role);
+  const ai = await getAiUsageForStatus(env.DB, userId);
+  const image = await getImageUsageForStatus(env.DB, userId);
+  const recipeCount = await countRecipes(env.DB, userId);
 
   const aiLimit = entitlement.isAdmin
     ? -1
@@ -99,33 +92,46 @@ subscriptionRoutes.get(
     : FREE_TIER.recipeImportsPerMonth;
   const recipeLimit = entitlement.isPro ? PRO_TIER.maxRecipes : FREE_TIER.maxRecipes;
 
-  return c.json(
-    ok({
-      isPro: entitlement.isPro,
-      isTrial: entitlement.isTrial,
-      trialEndsAt: entitlement.trialEndsAt ?? undefined,
-      expiresAt: entitlement.expiresAt ?? undefined,
-      productId:
-        entitlement.billingPeriod === 'monthly'
-          ? 'com.lardermind.pro.monthly'
-          : entitlement.billingPeriod === 'yearly'
-            ? 'com.lardermind.pro.yearly'
-            : undefined,
-      planName: entitlement.planName ?? undefined,
-      usage: {
-        aiMessagesUsed: ai.used,
-        aiMessagesLimit: aiLimit,
-        // Import counter not tracked in v1 (entitlement not enforced).
-        recipeImportsUsed: 0,
-        recipeImportsLimit,
-        recipeCount,
-        recipeLimit,
-        imageUploadsUsed: image.used,
-        imageUploadsLimit: imageLimit,
-      },
-    }),
-  );
-});
+  return {
+    isPro: entitlement.isPro,
+    isTrial: entitlement.isTrial,
+    trialEndsAt: entitlement.trialEndsAt ?? undefined,
+    expiresAt: entitlement.expiresAt ?? undefined,
+    productId:
+      entitlement.billingPeriod === 'monthly'
+        ? 'com.lardermind.pro.monthly'
+        : entitlement.billingPeriod === 'yearly'
+          ? 'com.lardermind.pro.yearly'
+          : undefined,
+    planName: entitlement.planName ?? undefined,
+    source: entitlement.source ?? undefined,
+    usage: {
+      aiMessagesUsed: ai.used,
+      aiMessagesLimit: aiLimit,
+      // Import counter not tracked in v1 (entitlement not enforced).
+      recipeImportsUsed: 0,
+      recipeImportsLimit,
+      recipeCount,
+      recipeLimit,
+      imageUploadsUsed: image.used,
+      imageUploadsLimit: imageLimit,
+    },
+  };
+}
+
+subscriptionRoutes.get(
+  '/api/subscription/status',
+  requireAuth,
+  requireNonGuest,
+  async (c) => {
+    const userId = c.get('userId');
+    const user = await findUserById(c.env.DB, userId);
+    if (!user) {
+      return c.json(fail('User not found'), 401);
+    }
+    return c.json(ok(await buildSubscriptionStatus(c.env, userId, user.role)));
+  },
+);
 
 subscriptionRoutes.post(
   '/api/subscription/checkout',
