@@ -5,8 +5,8 @@ export const chatSendBodySchema = z.object({
   sessionId: z.string().optional(),
   clientLocalDate: z.string().optional(),
   /**
-   * Optional reply language from the app UI: 'zh' | 'en' (locale tags such as
-   * 'zh-TW', 'zh-CN', 'en-US' are accepted by prefix; unknown values are ignored).
+   * Optional reply language from the app UI: en | zh | es | fr | de | ja (locale tags such as
+   * 'zh-TW', 'es-MX', 'en-US' are accepted by prefix; unknown values are ignored).
    * When absent the server detects it from the conversation.
    */
   language: z.string().max(35).optional(),
