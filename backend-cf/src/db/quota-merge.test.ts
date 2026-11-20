@@ -4,6 +4,7 @@ import {
   getImageUsageForStatus,
   mergeGuestUsageIntoRealUser,
   startOfUtcDay,
+  startOfUtcIsoWeek,
   startOfUtcMonth,
 } from './quotas';
 
@@ -145,6 +146,20 @@ describe('mergeGuestUsageIntoRealUser', () => {
     const images = await getImageUsageForStatus(db, 'real');
     expect(images.used).toBe(2);
 
+    vi.restoreAllMocks();
+  });
+
+  it('sums guest daily usage into the real user weekly counter', async () => {
+    const now = Math.floor(Date.UTC(2026, 9, 24, 18, 0, 0) / 1000); // Saturday
+    vi.spyOn(Date, 'now').mockReturnValue(now * 1000);
+    const weekStart = startOfUtcIsoWeek(now);
+    const { db, byUser } = createMultiUserQuotaDb([
+      { id: 'qg', user_id: 'guest', ai_message_sent: 3, ai_period_start: startOfUtcDay(now), image_uploads: 0, image_period_start: null },
+      { id: 'qr', user_id: 'real', ai_message_sent: 10, ai_period_start: weekStart, image_uploads: 0, image_period_start: null },
+    ]);
+    await mergeGuestUsageIntoRealUser(db, 'guest', 'real');
+    expect(byUser.get('real')?.ai_message_sent).toBe(13);
+    expect(byUser.get('real')?.ai_period_start).toBe(weekStart);
     vi.restoreAllMocks();
   });
 

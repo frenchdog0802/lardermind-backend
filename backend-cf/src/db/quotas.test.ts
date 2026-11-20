@@ -2,12 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   checkAndIncrementAiMessage,
   checkAndIncrementImageUpload,
-  FREE_AI_MESSAGES_PER_DAY,
+  FREE_AI_MESSAGES_PER_WEEK,
   FREE_IMAGE_UPLOAD_LIMIT,
   GUEST_AI_MESSAGES_PER_DAY,
-  PRO_AI_MESSAGES_PER_DAY,
+  PRO_AI_MESSAGES_PER_WEEK,
   QuotaExceededError,
   startOfUtcDay,
+  startOfUtcIsoWeek,
+  aiPeriodResetsAt,
+  getAiUsageForStatus,
   startOfUtcMonth,
 } from './quotas';
 
@@ -105,6 +108,24 @@ describe('startOfUtcDay', () => {
   });
 });
 
+describe('startOfUtcIsoWeek', () => {
+  it('returns Monday 00:00 UTC for a mid-week time', () => {
+    const wed = Date.UTC(2026, 8, 16, 15, 0, 0) / 1000; // Wed 2026-09-16
+    expect(startOfUtcIsoWeek(wed)).toBe(Date.UTC(2026, 8, 14) / 1000);
+  });
+  it('maps Monday 00:00 to itself and Sunday 23:59 to the same week', () => {
+    const mon = Date.UTC(2026, 8, 14) / 1000;
+    expect(startOfUtcIsoWeek(mon)).toBe(mon);
+    expect(startOfUtcIsoWeek(Date.UTC(2026, 8, 20, 23, 59, 59) / 1000)).toBe(mon);
+    expect(startOfUtcIsoWeek(Date.UTC(2026, 8, 21) / 1000)).toBe(mon + 7 * 86400);
+  });
+  it('resetsAt is next Monday 00:00 UTC for week and next midnight for day', () => {
+    const thu = Date.UTC(2026, 8, 17, 12, 0, 0) / 1000;
+    expect(aiPeriodResetsAt('week', thu)).toBe(Date.UTC(2026, 8, 21) / 1000);
+    expect(aiPeriodResetsAt('day', thu)).toBe(Date.UTC(2026, 8, 18) / 1000);
+  });
+});
+
 describe('checkAndIncrementImageUpload', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -168,45 +189,71 @@ describe('checkAndIncrementAiMessage', () => {
     vi.setSystemTime(new Date('2026-09-17T12:00:00Z'));
   });
 
-  it('allows 20 free messages then forbids the 21st', async () => {
+  const nowSec = () => Math.floor(Date.now() / 1000);
+
+  it('allows 50 free messages per ISO week then forbids the 51st', async () => {
+    expect(FREE_AI_MESSAGES_PER_WEEK).toBe(50);
     const { db, state } = createFakeDb({
       ai_message_sent: 0,
-      ai_period_start: startOfUtcDay(Math.floor(Date.now() / 1000)),
+      ai_period_start: startOfUtcIsoWeek(nowSec()),
     });
 
-    for (let i = 0; i < FREE_AI_MESSAGES_PER_DAY; i++) {
+    for (let i = 0; i < FREE_AI_MESSAGES_PER_WEEK; i++) {
       await checkAndIncrementAiMessage(db, 'u1');
     }
-    expect(state.row?.ai_message_sent).toBe(20);
+    expect(state.row?.ai_message_sent).toBe(50);
 
+    await expect(checkAndIncrementAiMessage(db, 'u1')).rejects.toThrow(
+      'AI message quota exceeded for this week',
+    );
+  });
+
+  it('does not reset free counter at UTC midnight mid-week', async () => {
+    // 2026-09-17 is a Thursday; usage stamped Monday of this week still counts.
+    const { db } = createFakeDb({
+      ai_message_sent: 50,
+      ai_period_start: startOfUtcIsoWeek(nowSec()),
+    });
+    vi.setSystemTime(new Date('2026-09-18T00:00:01Z'));
     await expect(checkAndIncrementAiMessage(db, 'u1')).rejects.toBeInstanceOf(
       QuotaExceededError,
     );
   });
 
-  it('resets counter on day rollover', async () => {
-    const oldPeriod = Date.UTC(2026, 8, 16) / 1000;
+  it('counts a legacy day-stamped row from earlier this week toward the week', async () => {
     const { db, state } = createFakeDb({
-      ai_message_sent: 20,
-      ai_period_start: oldPeriod,
+      ai_message_sent: 49,
+      ai_period_start: startOfUtcDay(nowSec()), // legacy daily stamp, inside this week
+    });
+    await checkAndIncrementAiMessage(db, 'u1');
+    expect(state.row?.ai_message_sent).toBe(50);
+    expect(state.row?.ai_period_start).toBe(startOfUtcIsoWeek(nowSec()));
+    await expect(checkAndIncrementAiMessage(db, 'u1')).rejects.toBeInstanceOf(
+      QuotaExceededError,
+    );
+  });
+
+  it('resets free counter on ISO week rollover (Monday 00:00 UTC)', async () => {
+    const lastWeek = startOfUtcIsoWeek(nowSec()) - 7 * 86400;
+    const { db, state } = createFakeDb({
+      ai_message_sent: 50,
+      ai_period_start: lastWeek,
     });
 
     await checkAndIncrementAiMessage(db, 'u1');
     expect(state.row?.ai_message_sent).toBe(1);
-    expect(state.row?.ai_period_start).toBe(
-      startOfUtcDay(Math.floor(Date.now() / 1000)),
-    );
+    expect(state.row?.ai_period_start).toBe(startOfUtcIsoWeek(nowSec()));
   });
 
-  it('allows PRO_AI_MESSAGES_PER_DAY (150) for pro', async () => {
-    expect(PRO_AI_MESSAGES_PER_DAY).toBe(150);
+  it('allows PRO_AI_MESSAGES_PER_WEEK (300) for pro', async () => {
+    expect(PRO_AI_MESSAGES_PER_WEEK).toBe(300);
     const { db, state } = createFakeDb({
-      ai_message_sent: PRO_AI_MESSAGES_PER_DAY - 1,
-      ai_period_start: startOfUtcDay(Math.floor(Date.now() / 1000)),
+      ai_message_sent: PRO_AI_MESSAGES_PER_WEEK - 1,
+      ai_period_start: startOfUtcIsoWeek(nowSec()),
     });
 
     await checkAndIncrementAiMessage(db, 'u1', { isPro: true });
-    expect(state.row?.ai_message_sent).toBe(PRO_AI_MESSAGES_PER_DAY);
+    expect(state.row?.ai_message_sent).toBe(PRO_AI_MESSAGES_PER_WEEK);
 
     await expect(
       checkAndIncrementAiMessage(db, 'u1', { isPro: true }),
@@ -216,7 +263,7 @@ describe('checkAndIncrementAiMessage', () => {
   it('skips cap for admin', async () => {
     const { db, state } = createFakeDb({
       ai_message_sent: 500,
-      ai_period_start: startOfUtcDay(Math.floor(Date.now() / 1000)),
+      ai_period_start: startOfUtcIsoWeek(Math.floor(Date.now() / 1000)),
     });
 
     await checkAndIncrementAiMessage(db, 'u1', { isAdmin: true });
@@ -236,6 +283,41 @@ describe('checkAndIncrementAiMessage', () => {
 
     await expect(
       checkAndIncrementAiMessage(db, 'g1', { isGuest: true }),
-    ).rejects.toBeInstanceOf(QuotaExceededError);
+    ).rejects.toThrow('AI message quota exceeded for today');
+  });
+
+  it('guest counter still resets daily, not weekly', async () => {
+    const { db, state } = createFakeDb({
+      ai_message_sent: 5,
+      ai_period_start: startOfUtcDay(Math.floor(Date.now() / 1000)) - 86400,
+    });
+    await checkAndIncrementAiMessage(db, 'g1', { isGuest: true });
+    expect(state.row?.ai_message_sent).toBe(1);
+  });
+});
+
+describe('getAiUsageForStatus', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-17T12:00:00Z')); // Thursday
+  });
+
+  it('reports weekly period + resetsAt (next Monday) for non-guests', async () => {
+    const { db } = createFakeDb({
+      ai_message_sent: 12,
+      ai_period_start: startOfUtcIsoWeek(Math.floor(Date.now() / 1000)),
+    });
+    const r = await getAiUsageForStatus(db, 'u1');
+    expect(r.used).toBe(12);
+    expect(r.period).toBe('week');
+    expect(r.resetsAt).toBe(Date.UTC(2026, 8, 21) / 1000);
+  });
+
+  it('reports 0 used for a stale previous-week row', async () => {
+    const { db } = createFakeDb({
+      ai_message_sent: 40,
+      ai_period_start: Date.UTC(2026, 8, 7) / 1000,
+    });
+    expect((await getAiUsageForStatus(db, 'u1')).used).toBe(0);
   });
 });

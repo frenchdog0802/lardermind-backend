@@ -2,8 +2,8 @@ import { nowUnixSeconds } from '../lib/time';
 import { FREE_TIER, GUEST_TIER, PRO_TIER } from '../lib/entitlement';
 
 export const FREE_IMAGE_UPLOAD_LIMIT = FREE_TIER.imageUploadsPerMonth;
-export const FREE_AI_MESSAGES_PER_DAY = FREE_TIER.aiMessagesPerDay;
-export const PRO_AI_MESSAGES_PER_DAY = PRO_TIER.aiMessagesPerDay;
+export const FREE_AI_MESSAGES_PER_WEEK = FREE_TIER.aiMessagesPerWeek;
+export const PRO_AI_MESSAGES_PER_WEEK = PRO_TIER.aiMessagesPerWeek;
 export const GUEST_AI_MESSAGES_PER_DAY = GUEST_TIER.aiMessagesPerDay;
 
 export class QuotaExceededError extends Error {
@@ -37,6 +37,32 @@ export function startOfUtcMonth(unixSeconds: number): number {
 export function startOfUtcDay(unixSeconds: number): number {
   const d = new Date(unixSeconds * 1000);
   return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000);
+}
+
+/** Start of the ISO week (Monday 00:00 UTC) containing `unixSeconds`. */
+export function startOfUtcIsoWeek(unixSeconds: number): number {
+  const dayStart = startOfUtcDay(unixSeconds);
+  const daysSinceMonday = (new Date(dayStart * 1000).getUTCDay() + 6) % 7;
+  return dayStart - daysSinceMonday * 86400;
+}
+
+export type AiPeriod = 'day' | 'week';
+
+/**
+ * Guests: 5 / UTC day. Free + Pro (+ admin): ISO week (Mon 00:00 UTC).
+ * Both periods share the single `usage_quotas.ai_*` counter (one row per user); a row
+ * stamped with a day start that falls inside the current week keeps counting toward that week.
+ */
+export function aiPeriodFor(isGuest: boolean): AiPeriod {
+  return isGuest ? 'day' : 'week';
+}
+
+export function aiPeriodStart(period: AiPeriod, nowSeconds: number): number {
+  return period === 'day' ? startOfUtcDay(nowSeconds) : startOfUtcIsoWeek(nowSeconds);
+}
+
+export function aiPeriodResetsAt(period: AiPeriod, nowSeconds: number): number {
+  return aiPeriodStart(period, nowSeconds) + (period === 'day' ? 86400 : 7 * 86400);
 }
 
 /**
@@ -101,7 +127,7 @@ export async function checkAndIncrementImageUpload(
 }
 
 /**
- * Increment AI message counter. Free: 20 / UTC day. Pro: 150 / UTC day. Guest: 5 / UTC day.
+ * Increment AI message counter. Free: 50 / ISO week. Pro: 300 / ISO week. Guest: 5 / UTC day.
  * Admin: unlimited (still increments for usage stats).
  */
 export async function checkAndIncrementAiMessage(
@@ -117,10 +143,11 @@ export async function checkAndIncrementAiMessage(
     : isGuest
       ? GUEST_AI_MESSAGES_PER_DAY
       : isPro
-        ? PRO_AI_MESSAGES_PER_DAY
-        : FREE_AI_MESSAGES_PER_DAY;
+        ? PRO_AI_MESSAGES_PER_WEEK
+        : FREE_AI_MESSAGES_PER_WEEK;
+  const period = aiPeriodFor(isGuest);
   const now = nowUnixSeconds();
-  const periodStart = startOfUtcDay(now);
+  const periodStart = aiPeriodStart(period, now);
 
   let row = await db
     .prepare(
@@ -155,7 +182,11 @@ export async function checkAndIncrementAiMessage(
   }
 
   if (limit >= 0 && sent >= limit) {
-    throw new QuotaExceededError('AI message quota exceeded for today');
+    throw new QuotaExceededError(
+      period === 'day'
+        ? 'AI message quota exceeded for today'
+        : 'AI message quota exceeded for this week',
+    );
   }
 
   await db
@@ -173,9 +204,17 @@ export async function checkAndIncrementAiMessage(
 export async function getAiUsageForStatus(
   db: D1Database,
   userId: string,
-): Promise<{ used: number; periodStart: number | null }> {
+  options: { isGuest?: boolean } = {},
+): Promise<{
+  used: number;
+  periodStart: number | null;
+  period: AiPeriod;
+  resetsAt: number;
+}> {
   const now = nowUnixSeconds();
-  const periodStart = startOfUtcDay(now);
+  const period = aiPeriodFor(Boolean(options.isGuest));
+  const periodStart = aiPeriodStart(period, now);
+  const resetsAt = aiPeriodResetsAt(period, now);
   const row = await db
     .prepare(
       `SELECT ai_message_sent, ai_period_start FROM usage_quotas WHERE user_id = ? LIMIT 1`,
@@ -183,11 +222,16 @@ export async function getAiUsageForStatus(
     .bind(userId)
     .first<{ ai_message_sent: number; ai_period_start: number | null }>();
 
-  if (!row) return { used: 0, periodStart: null };
+  if (!row) return { used: 0, periodStart: null, period, resetsAt };
   if (row.ai_period_start == null || row.ai_period_start < periodStart) {
-    return { used: 0, periodStart };
+    return { used: 0, periodStart, period, resetsAt };
   }
-  return { used: row.ai_message_sent ?? 0, periodStart: row.ai_period_start };
+  return {
+    used: row.ai_message_sent ?? 0,
+    periodStart: row.ai_period_start,
+    period,
+    resetsAt,
+  };
 }
 
 export async function getImageUsageForStatus(
@@ -230,7 +274,8 @@ function currentPeriodCount(
 
 /**
  * Fold guest usage into the real user's quota row, then delete the guest row.
- * AI = UTC day; images = UTC month. Same-period counts are summed.
+ * Guest AI = UTC day (only today's count); real-user AI = ISO week; images = UTC month.
+ * The merged AI count is stored on the real user's weekly period.
  */
 export async function mergeGuestUsageIntoRealUser(
   db: D1Database,
@@ -239,6 +284,7 @@ export async function mergeGuestUsageIntoRealUser(
 ): Promise<void> {
   const now = nowUnixSeconds();
   const dayStart = startOfUtcDay(now);
+  const weekStart = startOfUtcIsoWeek(now);
   const monthStart = startOfUtcMonth(now);
 
   const guest = await db
@@ -261,7 +307,7 @@ export async function mergeGuestUsageIntoRealUser(
     ? currentPeriodCount(guest.ai_message_sent, guest.ai_period_start, dayStart)
     : 0;
   const realAi = real
-    ? currentPeriodCount(real.ai_message_sent, real.ai_period_start, dayStart)
+    ? currentPeriodCount(real.ai_message_sent, real.ai_period_start, weekStart)
     : 0;
   const guestImages = guest
     ? currentPeriodCount(guest.image_uploads, guest.image_period_start, monthStart)
@@ -284,7 +330,7 @@ export async function mergeGuestUsageIntoRealUser(
              updated_at = ?
          WHERE user_id = ?`,
       )
-      .bind(mergedAi, dayStart, mergedImages, monthStart, now, realUserId)
+      .bind(mergedAi, weekStart, mergedImages, monthStart, now, realUserId)
       .run();
     if (guest) {
       await db
@@ -310,7 +356,7 @@ export async function mergeGuestUsageIntoRealUser(
       .bind(
         realUserId,
         mergedAi,
-        dayStart,
+        weekStart,
         mergedImages,
         monthStart,
         now,
@@ -330,7 +376,7 @@ export async function mergeGuestUsageIntoRealUser(
       crypto.randomUUID(),
       realUserId,
       mergedAi,
-      dayStart,
+      weekStart,
       mergedImages,
       monthStart,
       now,
