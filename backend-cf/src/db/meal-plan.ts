@@ -591,8 +591,8 @@ export async function listMealPlans(
   const binds: unknown[] = [userId];
   const q = query?.trim();
   if (q) {
-    where.push('LOWER(meal_name) LIKE LOWER(?)');
-    binds.push(`%${q}%`);
+    where.push('INSTR(LOWER(meal_name), LOWER(?)) > 0');
+    binds.push(q);
   }
   if (range?.from) {
     where.push('serving_date >= ?');

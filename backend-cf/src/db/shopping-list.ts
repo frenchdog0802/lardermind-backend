@@ -127,13 +127,13 @@ export async function listShoppingListItems(
 ): Promise<ShoppingListItemRow[]> {
   const sql = query?.trim()
     ? `SELECT * FROM shopping_list_items
-       WHERE user_id = ? AND LOWER(name) LIKE LOWER(?)
+       WHERE user_id = ? AND INSTR(LOWER(name), LOWER(?)) > 0
        ORDER BY created_at ASC`
     : `SELECT * FROM shopping_list_items
        WHERE user_id = ? ORDER BY created_at ASC`;
   const stmt = db.prepare(sql);
   const result = query?.trim()
-    ? await stmt.bind(userId, `%${query.trim()}%`).all<ShoppingListItemRow>()
+    ? await stmt.bind(userId, query.trim()).all<ShoppingListItemRow>()
     : await stmt.bind(userId).all<ShoppingListItemRow>();
   return result.results ?? [];
 }

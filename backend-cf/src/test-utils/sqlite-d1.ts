@@ -19,7 +19,19 @@ export function createSqliteD1(opts: { migrate?: boolean } = {}) {
   const log: string[] = [];
   const batches: string[][] = [];
 
+  // D1 rejects LIKE/GLOB patterns over 50 bytes ("LIKE or GLOB pattern too complex");
+  // node:sqlite does not, so emulate it to catch regressions locally.
+  function assertD1PatternLimit(sql: string, bound: Bound) {
+    if (!/(?<![A-Za-z_])(?:LIKE|GLOB)(?![A-Za-z_])/i.test(sql)) return;
+    for (const b of bound) {
+      if (typeof b === 'string' && new TextEncoder().encode(b).length > 50) {
+        throw new Error('D1_ERROR: LIKE or GLOB pattern too complex: SQLITE_ERROR');
+      }
+    }
+  }
+
   function stmt(sql: string, bound: Bound = []) {
+    assertD1PatternLimit(sql, bound);
     const self = {
       __sql: sql,
       bind(...args: Bound) {
