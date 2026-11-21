@@ -85,7 +85,7 @@ describe('POST /api/subscription/validate-receipt', () => {
     expect(json.data.valid).toBe(true);
     expect(json.data.productId).toBe(MONTHLY);
     expect(json.data.status).toMatchObject({ isPro: true, isTrial: true, source: 'apple' });
-    expect(json.data.status.usage.aiMessagesLimit).toBe(150); // same Pro quota as Stripe
+    expect(json.data.status.usage.aiMessagesLimit).toBe(300); // same Pro quota as Stripe
 
     const row = await getAppleSubscription(env.DB, 'orig-1');
     expect(row).toMatchObject({

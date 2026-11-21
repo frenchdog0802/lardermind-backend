@@ -28,7 +28,7 @@ This feature makes **Web Pro** purchasable and enforceable via Stripe, while **A
 | One sub per user | Reuse Stripe Customer; if already Pro → **Portal** not second Checkout | Avoid duplicate subscriptions |
 | Enable flag | `stripeCheckoutEnabled: true` only when secret + webhook secret + both price IDs set | Safe degrade if misconfigured |
 | Admin | `role === 'admin'` → unlimited quotas; no Stripe required | Existing upload pattern |
-| AI daily limit | **Enforce** free 20 / Pro 150 per UTC day when charging chat quota | Advertised today but not enforced |
+| AI daily limit | **Enforce** free 50 / Pro 300 per ISO week when charging chat quota | Advertised today but not enforced |
 | Image monthly limit | Wire real `isPro` into upload / pantry-vision | Already enforced for free; Pro never applied |
 | Recipe count / import caps | **Status reporting only in v1**; hard block deferred | Avoid expanding recipe/import pipeline in same feature |
 | Legal | Update Terms + Privacy for Stripe / renewals / cancel | Currently “not disclosed yet” |
@@ -78,7 +78,7 @@ This feature makes **Web Pro** purchasable and enforceable via Stripe, while **A
 | Gate | Free | Pro / admin |
 |------|------|-------------|
 | Image uploads / month (UTC) | 10 | unlimited |
-| AI messages / day (UTC) | 20 | 150 |
+| AI messages / ISO week (UTC) | 50 | 300 |
 | Recipe create / import hard cap | not enforced | not enforced |
 
 ### 2.4 Ops / Stripe Dashboard
@@ -161,7 +161,7 @@ Operator must provide (test then live):
 - [ ] Cancel Checkout does not grant Pro
 - [ ] Portal opens for Pro user; cancel-at-period-end keeps Pro until end (simulatable in test clock)
 - [ ] `past_due` keeps Pro; terminal cancel/unpaid drops Pro
-- [ ] Image + AI free caps enforced; Pro/admin unlimited (AI 150/day)
+- [ ] Image + AI free caps enforced; Pro/admin unlimited (AI 300/week)
 - [ ] `stripeCheckoutEnabled` false when any required env missing
 - [ ] Terms + Privacy updated; `docs/legal/README.md` notes subscriptions disclosed
 - [ ] Mobile IAP still out of path (no Play Billing regression required)

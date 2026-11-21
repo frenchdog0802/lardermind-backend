@@ -30,7 +30,7 @@ export const GUEST_TIER = {
 };
 
 export const FREE_TIER = {
-  aiMessagesPerDay: 20,
+  aiMessagesPerWeek: 50,
   recipeImportsPerMonth: 3,
   maxRecipes: 50,
   imageUploadsPerMonth: 10,
@@ -43,7 +43,7 @@ export const GUEST_MINT_PER_IP_PER_DAY = 5;
 export const GUEST_CHAT_PER_IP_PER_DAY = 20;
 
 export const PRO_TIER = {
-  aiMessagesPerDay: 150,
+  aiMessagesPerWeek: 300,
   recipeImportsPerMonth: 50,
   maxRecipes: -1,
   imageUploadsPerMonth: -1,

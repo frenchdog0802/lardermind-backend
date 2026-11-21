@@ -28,8 +28,8 @@ import {
 import {
   getAiUsageForStatus,
   getImageUsageForStatus,
-  FREE_AI_MESSAGES_PER_DAY,
-  PRO_AI_MESSAGES_PER_DAY,
+  FREE_AI_MESSAGES_PER_WEEK,
+  PRO_AI_MESSAGES_PER_WEEK,
   FREE_IMAGE_UPLOAD_LIMIT,
 } from '../db/quotas';
 import { countRecipes } from '../db/recipe';
@@ -84,8 +84,8 @@ export async function buildSubscriptionStatus(env: Env, userId: string, role?: s
   const aiLimit = entitlement.isAdmin
     ? -1
     : entitlement.isPro
-      ? PRO_AI_MESSAGES_PER_DAY
-      : FREE_AI_MESSAGES_PER_DAY;
+      ? PRO_AI_MESSAGES_PER_WEEK
+      : FREE_AI_MESSAGES_PER_WEEK;
   const imageLimit = entitlement.isAdmin || entitlement.isPro ? -1 : FREE_IMAGE_UPLOAD_LIMIT;
   const recipeImportsLimit = entitlement.isPro
     ? PRO_TIER.recipeImportsPerMonth
@@ -108,6 +108,9 @@ export async function buildSubscriptionStatus(env: Env, userId: string, role?: s
     usage: {
       aiMessagesUsed: ai.used,
       aiMessagesLimit: aiLimit,
+      aiMessagesPeriod: ai.period,
+      /** Unix seconds (UTC) when the AI counter resets (next Monday 00:00 UTC). */
+      aiMessagesResetsAt: ai.resetsAt,
       // Import counter not tracked in v1 (entitlement not enforced).
       recipeImportsUsed: 0,
       recipeImportsLimit,
