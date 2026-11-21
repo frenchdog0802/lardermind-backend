@@ -46,12 +46,12 @@ export async function listFolders(
 ): Promise<FolderRow[]> {
   const sql = query?.trim()
     ? `SELECT * FROM folders
-       WHERE user_id = ? AND LOWER(name) LIKE LOWER(?)
+       WHERE user_id = ? AND INSTR(LOWER(name), LOWER(?)) > 0
        ORDER BY created_at ASC`
     : `SELECT * FROM folders WHERE user_id = ? ORDER BY created_at ASC`;
   const stmt = db.prepare(sql);
   const result = query?.trim()
-    ? await stmt.bind(userId, `%${query.trim()}%`).all<FolderRow>()
+    ? await stmt.bind(userId, query.trim()).all<FolderRow>()
     : await stmt.bind(userId).all<FolderRow>();
   return result.results ?? [];
 }

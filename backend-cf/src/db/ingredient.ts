@@ -68,12 +68,12 @@ export async function listIngredients(
 ): Promise<IngredientRow[]> {
   const sql = query?.trim()
     ? `SELECT * FROM ingredients
-       WHERE user_id = ? AND LOWER(name) LIKE LOWER(?)
+       WHERE user_id = ? AND INSTR(LOWER(name), LOWER(?)) > 0
        ORDER BY created_at ASC`
     : `SELECT * FROM ingredients WHERE user_id = ? ORDER BY created_at ASC`;
   const stmt = db.prepare(sql);
   const result = query?.trim()
-    ? await stmt.bind(userId, `%${query.trim()}%`).all<IngredientRow>()
+    ? await stmt.bind(userId, query.trim()).all<IngredientRow>()
     : await stmt.bind(userId).all<IngredientRow>();
   return result.results ?? [];
 }

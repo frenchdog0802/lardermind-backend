@@ -134,9 +134,9 @@ export async function listRecipes(
   const tail = page ? ' ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?' : ' ORDER BY created_at ASC';
   const sql = q
     ? `SELECT * FROM recipes
-       WHERE user_id = ? AND LOWER(meal_name) LIKE LOWER(?)${tail}`
+       WHERE user_id = ? AND INSTR(LOWER(meal_name), LOWER(?)) > 0${tail}`
     : `SELECT * FROM recipes WHERE user_id = ?${tail}`;
-  const binds: unknown[] = q ? [userId, `%${q}%`] : [userId];
+  const binds: unknown[] = q ? [userId, q] : [userId];
   if (page) binds.push(page.limit, page.offset);
   const result = await db.prepare(sql).bind(...binds).all<RecipeRow>();
   return result.results ?? [];
