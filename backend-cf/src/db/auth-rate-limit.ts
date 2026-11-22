@@ -9,6 +9,7 @@ export const AUTH_LIMITS = {
   signinEmail: 20,
   signupIp: 10,
   googleIp: 30,
+  appleIp: 30,
   resetRequestIp: 10,
   resetRequestEmail: 3,
   resetConfirmIp: 20,
@@ -38,6 +39,10 @@ export function signupIpSubject(ip: string): string {
 
 export function googleIpSubject(ip: string): string {
   return `google:ip:${ip.trim() || 'unknown'}`;
+}
+
+export function appleIpSubject(ip: string): string {
+  return `apple:ip:${ip.trim() || 'unknown'}`;
 }
 
 export function resetRequestIpSubject(ip: string): string {

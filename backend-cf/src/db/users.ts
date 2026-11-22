@@ -2,6 +2,7 @@ import type { Env } from '../env';
 import { nowUnixSeconds } from '../lib/time';
 import { hashPassword, verifyPassword } from '../lib/password';
 import type { GoogleIdTokenProfile } from '../lib/google-id-token';
+import type { AppleIdTokenProfile } from '../lib/apple-id-token';
 
 export type UserRow = {
   id: string;
@@ -13,6 +14,7 @@ export type UserRow = {
   salt: string | null;
   role: string;
   google_id: string | null;
+  apple_id?: string | null;
   picture: string | null;
   created_at: number | null;
   updated_at: number | null;
@@ -21,6 +23,7 @@ export type UserRow = {
   deleted_at?: number | null;
   deleted_email?: string | null;
   deleted_google_id?: string | null;
+  deleted_apple_id?: string | null;
 };
 
 export type AuthUserDto = {
@@ -65,6 +68,16 @@ export async function findUserByGoogleId(
   return db
     .prepare('SELECT * FROM users WHERE google_id = ? AND deleted_at IS NULL LIMIT 1')
     .bind(googleId)
+    .first<UserRow>();
+}
+
+export async function findUserByAppleId(
+  db: D1Database,
+  appleId: string,
+): Promise<UserRow | null> {
+  return db
+    .prepare('SELECT * FROM users WHERE apple_id = ? AND deleted_at IS NULL LIMIT 1')
+    .bind(appleId)
     .first<UserRow>();
 }
 
@@ -159,6 +172,91 @@ export async function upsertGoogleUser(
 
   const created = await findUserById(env.DB, id);
   if (!created) throw new Error('Failed to create Google user');
+  return created;
+}
+
+export type AppleNameInput = { givenName?: string | null; familyName?: string | null };
+
+function namesFromApple(
+  fullName: string | AppleNameInput | null | undefined,
+  email: string,
+): { first_name: string; last_name: string; name: string } {
+  let first = '';
+  let last = '';
+  if (typeof fullName === 'string') {
+    const parts = fullName.trim().split(/\s+/).filter(Boolean);
+    first = parts[0] ?? '';
+    last = parts.slice(1).join(' ');
+  } else if (fullName) {
+    first = fullName.givenName?.trim() ?? '';
+    last = fullName.familyName?.trim() ?? '';
+  }
+  if (!first && !last) {
+    // Apple only shares the name on the very first authorization; fall back to the email local part.
+    first = email.split('@')[0] || 'User';
+  }
+  return { first_name: first || 'User', last_name: last, name: `${first} ${last}`.trim() || 'User' };
+}
+
+async function applePlaceholderEmail(sub: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(sub));
+  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `apple-${hex.slice(0, 24)}@apple.lardermind.local`;
+}
+
+/**
+ * Find by apple_id (the token `sub`), else link by the token's VERIFIED email, else create.
+ * The client-supplied `email` / `fullName` are never used to link to an existing account; they only
+ * fill in a brand-new account (Apple sends them on first authorization only).
+ */
+export async function upsertAppleUser(
+  env: Env,
+  profile: AppleIdTokenProfile,
+  extra: { fullName?: string | AppleNameInput | null; email?: string | null } = {},
+): Promise<UserRow> {
+  const byApple = await findUserByAppleId(env.DB, profile.sub);
+  if (byApple) return byApple;
+
+  const tokenEmail = profile.email;
+  if (tokenEmail && profile.email_verified) {
+    const byEmail = await findUserByEmail(env.DB, tokenEmail);
+    if (byEmail && !byEmail.apple_id) {
+      const now = nowUnixSeconds();
+      await env.DB.prepare('UPDATE users SET apple_id = ?, updated_at = ? WHERE id = ?')
+        .bind(profile.sub, now, byEmail.id)
+        .run();
+      const linked = await findUserById(env.DB, byEmail.id);
+      if (!linked) throw new Error('Failed to link Apple account');
+      return linked;
+    }
+  }
+
+  // New account. Prefer the token email, then the client-provided one, else a placeholder.
+  let email = tokenEmail ?? '';
+  if (!email && extra.email?.trim()) email = extra.email.trim();
+  if (!email || (await findUserByEmail(env.DB, email))) {
+    email = await applePlaceholderEmail(profile.sub);
+  }
+  const { first_name, last_name, name } = namesFromApple(extra.fullName, email);
+  const id = crypto.randomUUID();
+  const hashedPassword = await hashPassword(await randomPasswordHex());
+  const now = nowUnixSeconds();
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO users (
+         id, first_name, last_name, name, email, hashed_password, salt, role,
+         apple_id, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'user', ?, ?, ?)`,
+    ).bind(id, first_name, last_name, name, email, hashedPassword, null, profile.sub, now, now),
+    env.DB.prepare(
+      `INSERT INTO usage_quotas (id, user_id, ai_message_sent, ai_period_start, created_at, updated_at)
+       VALUES (?, ?, 0, ?, ?, ?)`,
+    ).bind(crypto.randomUUID(), id, now, now, now),
+  ]);
+
+  const created = await findUserById(env.DB, id);
+  if (!created) throw new Error('Failed to create Apple user');
   return created;
 }
 
@@ -270,7 +368,8 @@ export async function softDeleteUser(
     db
       .prepare(
         `UPDATE users SET deleted_at = ?, deleted_email = email, deleted_google_id = google_id,
-           email = ?, google_id = NULL, hashed_password = NULL, salt = NULL, updated_at = ?
+           deleted_apple_id = apple_id,
+           email = ?, google_id = NULL, apple_id = NULL, hashed_password = NULL, salt = NULL, updated_at = ?
          WHERE id = ? AND deleted_at IS NULL`,
       )
       .bind(now, placeholder, now, userId),

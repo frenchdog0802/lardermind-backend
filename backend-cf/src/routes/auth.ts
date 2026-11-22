@@ -6,11 +6,13 @@ import {
   signupBodySchema,
   signinBodySchema,
   googleLoginBodySchema,
+  appleLoginBodySchema,
   claimGuestBodySchema,
 } from '../schemas/auth';
 import {
   AUTH_LIMITS,
   AuthRateLimitError,
+  appleIpSubject,
   assertAuthAllowed,
   googleIpSubject,
   signinEmailSubject,
@@ -19,13 +21,16 @@ import {
 } from '../db/auth-rate-limit';
 import { signJwt, verifyJwt } from '../lib/jwt';
 import { encodeBase64UrlJson } from '../lib/base64url';
-import { verifyGoogleIdToken } from '../lib/google-id-token';
+import { googleAudiences, verifyGoogleIdToken } from '../lib/google-id-token';
+import { verifyAppleIdentityToken } from '../lib/apple-id-token';
+import { appleBundleId } from '../lib/apple-iap';
 import {
   createUser,
   findUserById,
   signInUser,
   softDeleteUser,
   toAuthUserDto,
+  upsertAppleUser,
   upsertGoogleUser,
 } from '../db/users';
 import {
@@ -108,11 +113,11 @@ async function loginWithGoogleIdToken(
   idToken: string,
   guestToken?: string | null,
 ) {
-  const clientId = (env.GOOGLE_CLIENT_ID ?? '').trim();
-  if (!clientId) {
+  const audiences = googleAudiences(env);
+  if (audiences.length === 0) {
     throw new Error('GOOGLE_CLIENT_ID not configured');
   }
-  const profile = await verifyGoogleIdToken(idToken, clientId);
+  const profile = await verifyGoogleIdToken(idToken, audiences);
   const user = await upsertGoogleUser(env, profile);
   let claimed = false;
   try {
@@ -244,6 +249,41 @@ authRoutes.post('/api/auth/google-login', async (c) => {
       message.includes('not configured') || message.includes('JWT_SECRET')
         ? 500
         : 400;
+    return c.json(fail(message), status);
+  }
+});
+
+authRoutes.post('/api/auth/apple-login', async (c) => {
+  const parsed = await parseJsonBody(c, appleLoginBodySchema);
+  if (!parsed.ok) return c.json(fail(parsed.message, parsed.code), 400);
+  const limited = await enforceAuthLimit(
+    c,
+    appleIpSubject(clientIp(c)),
+    AUTH_LIMITS.appleIp,
+  );
+  if (limited) return limited;
+  const body = parsed.data;
+  try {
+    const profile = await verifyAppleIdentityToken(
+      body.identityToken,
+      appleBundleId(c.env),
+    );
+    const user = await upsertAppleUser(c.env, profile, {
+      fullName: body.fullName,
+      email: body.email,
+    });
+    let claimed = false;
+    try {
+      claimed = await maybeClaimGuest(c.env, user.id, body.guest_token);
+    } catch {
+      claimed = false;
+    }
+    const token = await issueToken(c.env, user.id);
+    return c.json(ok({ token, user: toAuthUserDto(user), claimed }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Apple login failed';
+    const status =
+      message.includes('not configured') || message.includes('JWT_SECRET') ? 500 : 400;
     return c.json(fail(message), status);
   }
 });

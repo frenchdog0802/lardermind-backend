@@ -130,7 +130,8 @@ Feature: [docs/features/frontend-cf-pages.md](../docs/features/frontend-cf-pages
 | `GET /api/health` | Done |
 | `POST /api/auth/signup`, `signin` | Done |
 | `GET /api/auth/signout` | Done |
-| `POST /api/auth/google-login` | Done (JSON `{ token }` = Google ID token) |
+| `POST /api/auth/google-login` | Done (JSON `{ token }` = Google ID token; `aud` may be `GOOGLE_CLIENT_ID` or `GOOGLE_IOS_CLIENT_ID`) |
+| `POST /api/auth/apple-login` | Done (JSON `{ identityToken, fullName?, email? }`; Apple JWKS, `aud` = `APPLE_BUNDLE_ID`; needs migration 0016) |
 | `POST /api/auth/google-callback` | Done (form `credential` → 302 `#google_auth=`) |
 | `POST /api/chat/stream` | Done (DeepSeek + tools + HITL interrupt via AI Gateway) |
 | Chat sessions / history | Done |
