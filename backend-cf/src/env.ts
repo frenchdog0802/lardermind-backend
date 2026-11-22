@@ -22,8 +22,10 @@ export type Env = {
   CF_AIG_TOKEN?: string;
   /** DeepSeek API key (Bearer to AI Gateway deepseek provider). */
   DEEPSEEK_API_KEY?: string;
-  /** DeepSeek model id. */
+  /** DeepSeek chat model id (non-thinking). */
   LLM_MODEL?: string;
+  /** DeepSeek planner model id for meal-plan turns (thinking enabled). */
+  LLM_PLANNER_MODEL?: string;
   /** Max agent tool rounds per turn (default 8). */
   CHAT_RECURSION_LIMIT?: string;
   /** OpenAI API key for pantry vision. */

@@ -4,10 +4,12 @@ import {
   aiGatewayRequestHeaders,
   DEFAULT_AI_GATEWAY_ID,
   DEFAULT_LLM_MODEL,
+  DEFAULT_PLANNER_MODEL,
   isAiGatewayAuthenticated,
   resolveAiGatewayConfig,
   resolveAiGatewayToken,
   resolveLlmModel,
+  resolvePlannerModel,
 } from './ai-gateway';
 import type { Env } from '../env';
 
@@ -37,6 +39,13 @@ describe('ai-gateway helpers', () => {
     expect(resolveLlmModel(env({ LLM_MODEL: 'deepseek-reasoner' }))).toBe(
       'deepseek-reasoner',
     );
+  });
+
+  it('defaults chat to deepseek-flash and planner to deepseek-v4-pro', () => {
+    expect(DEFAULT_LLM_MODEL).toBe('deepseek-flash');
+    expect(DEFAULT_PLANNER_MODEL).toBe('deepseek-v4-pro');
+    expect(resolvePlannerModel(env({}))).toBe('deepseek-v4-pro');
+    expect(resolvePlannerModel(env({ LLM_PLANNER_MODEL: ' x ' }))).toBe('x');
   });
 
   it('builds provider + Authenticated Gateway headers', () => {

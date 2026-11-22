@@ -43,6 +43,8 @@ export type PendingInterrupt = {
   messages: Array<Record<string, unknown>>;
   /** Reply language of the turn that created it ('zh' | 'en'). Missing on older rows. */
   language?: ChatLanguage;
+  /** LLM profile of the originating turn; 'planner' keeps thinking mode on resume. */
+  profile?: 'chat' | 'planner';
 };
 
 /** Pending approvals older than this are treated as rejected. */

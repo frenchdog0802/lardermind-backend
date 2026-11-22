@@ -31,6 +31,7 @@ import {
   completeChat,
   type ChatCompletionResult,
   type LlmMessage,
+  type LlmProfile,
   type ParsedToolCall,
 } from '../lib/llm-chat';
 import { nowUnixSeconds } from '../lib/time';
@@ -56,6 +57,7 @@ import {
   MUTATION_NO_TOOL_FALLBACK,
   MUTATION_TOOL_NUDGE,
 } from './tools/mutating-intent';
+import { looksLikeMealPlanRequest } from './tools/plan-intent';
 import { isGuestUserRow } from '../db/guests';
 import {
   detectConversationLanguage,
@@ -93,6 +95,7 @@ export type CompleteChatFn = (input: {
   messages: LlmMessage[];
   tools?: typeof COOKING_TOOLS;
   toolChoice?: 'auto' | 'required';
+  profile?: LlmProfile;
 }) => Promise<ChatCompletionResult>;
 
 export type ExecuteToolFn = (
@@ -122,6 +125,7 @@ function messagesToPending(
     if (m.tool_calls) out.tool_calls = m.tool_calls;
     if (m.tool_call_id) out.tool_call_id = m.tool_call_id;
     if (m.name) out.name = m.name;
+    if (m.reasoning_content) out.reasoning_content = m.reasoning_content;
     return out;
   });
 }
@@ -143,6 +147,9 @@ function pendingToMessages(
     }
     if (typeof m.name === 'string') {
       msg.name = m.name;
+    }
+    if (typeof m.reasoning_content === 'string') {
+      msg.reasoning_content = m.reasoning_content;
     }
     return msg;
   });
@@ -259,6 +266,7 @@ async function finalizeText(
   messages: LlmMessage[],
   cardEvents: ToolCardEvent[],
   complete: CompleteChatFn,
+  profile: LlmProfile = 'chat',
 ): Promise<ChatResponsePayload> {
   // If last turn already produced assistant text with no tools, use it.
   // Otherwise ask once more without forcing tools for a wrap-up.
@@ -274,6 +282,7 @@ async function finalizeText(
   } else {
     const wrap = await complete({
       env,
+      profile,
       messages: [
         ...messages,
         {
@@ -309,9 +318,11 @@ async function runToolLoop(
     isGuest?: boolean;
     previousAssistantText?: string | null;
     language?: ChatLanguage;
+    profile?: LlmProfile;
   } = {},
 ): Promise<AgentTurnResult> {
   const language = options.language ?? 'en';
+  const profile = options.profile ?? 'chat';
   const cardEvents: ToolCardEvent[] = [];
   const maxRounds = recursionLimit(env);
   let mutationNudgeUsed = false;
@@ -344,6 +355,7 @@ async function runToolLoop(
       messages,
       tools,
       toolChoice,
+      profile,
     });
     toolChoice = 'auto';
 
@@ -418,6 +430,7 @@ async function runToolLoop(
         })),
         messages: messagesToPending(messages),
         language,
+        profile,
       };
       await setPendingInterrupt(db, userId, sessionId, pending);
       return {
@@ -482,6 +495,7 @@ async function continueAfterApproval(
   complete: CompleteChatFn,
   execute: ExecuteToolFn,
   language: ChatLanguage = 'en',
+  profile: LlmProfile = 'chat',
 ): Promise<ContinueResult> {
   const user = await findUserById(db, userId);
   const isGuest = isGuestUserRow(user ?? null);
@@ -508,6 +522,7 @@ async function continueAfterApproval(
       messages,
       tools,
       toolChoice: 'auto',
+      profile,
     });
 
     if (result.toolCalls.length === 0) {
@@ -550,6 +565,7 @@ async function continueAfterApproval(
         })),
         messages: messagesToPending(messages),
         language,
+        profile,
       };
       const drafted = result.content.trim();
       return {
@@ -733,6 +749,16 @@ export async function runAgentTurn(
       })),
     ];
 
+    const previousAssistantText = [...history]
+      .reverse()
+      .find((m) => m.role === 'assistant')?.content;
+    const profile: LlmProfile =
+      looksLikeMealPlanRequest(input.message) ||
+      (looksLikeConfirmingWriteOffer(input.message, previousAssistantText) &&
+        looksLikeMealPlanRequest(previousAssistantText))
+        ? 'planner'
+        : 'chat';
+
     const turn = await runToolLoop(
       env,
       db,
@@ -745,9 +771,8 @@ export async function runAgentTurn(
       {
         isGuest,
         language,
-        previousAssistantText: [...history]
-          .reverse()
-          .find((m) => m.role === 'assistant')?.content,
+        previousAssistantText,
+        profile,
       },
     );
 
@@ -1201,6 +1226,7 @@ export async function resumeAgentTurn(
           complete,
           execute,
           pendingLanguage(pending, input.language),
+          pending.profile ?? 'chat',
         );
         if (continued.kind === 'interrupt') {
           // The model needs another approved step (e.g. planMeals after createRecipe).
@@ -1229,7 +1255,13 @@ export async function resumeAgentTurn(
           response = continued.response;
         }
       } else {
-        response = await finalizeText(env, messages, cardEvents, complete);
+        response = await finalizeText(
+          env,
+          messages,
+          cardEvents,
+          complete,
+          pending.profile ?? 'chat',
+        );
       }
       if (decision === 'reject' && response.type !== 'text') {
         const readOnlyEvents = cardEvents.filter(
