@@ -5,6 +5,7 @@ import {
   isAiGatewayAuthenticated,
   resolveAiGatewayConfig,
   resolveLlmModel,
+  resolvePlannerModel,
 } from './ai-gateway';
 
 export type LlmMessage = {
@@ -13,7 +14,15 @@ export type LlmMessage = {
   tool_calls?: LlmToolCall[];
   tool_call_id?: string;
   name?: string;
+  /**
+   * DeepSeek thinking-mode chain of thought. Never shown to users; only echoed back to
+   * the API (required when thinking mode runs tool calls).
+   */
+  reasoning_content?: string;
 };
+
+/** `chat` = deepseek-flash non-thinking; `planner` = deepseek-v4-pro thinking. */
+export type LlmProfile = 'chat' | 'planner';
 
 export type LlmToolCall = {
   id: string;
@@ -78,6 +87,14 @@ export function parseToolCallsFromMessage(
   return out;
 }
 
+function stripReasoning(messages: LlmMessage[]): LlmMessage[] {
+  return messages.map((m) => {
+    if (m.reasoning_content === undefined) return m;
+    const { reasoning_content: _drop, ...rest } = m;
+    return rest;
+  });
+}
+
 export async function completeChat(input: {
   env: Env;
   messages: LlmMessage[];
@@ -86,6 +103,8 @@ export async function completeChat(input: {
   toolChoice?: 'auto' | 'required';
   /** Optional OpenAI-compatible max_tokens (e.g. short auto-title calls). */
   maxTokens?: number;
+  /** Model profile; defaults to `chat`. */
+  profile?: LlmProfile;
 }): Promise<ChatCompletionResult> {
   const gateway = resolveAiGatewayConfig(input.env);
   const apiKey = (input.env.DEEPSEEK_API_KEY || '').trim();
@@ -94,24 +113,46 @@ export async function completeChat(input: {
   }
 
   const url = aiGatewayChatCompletionsUrl(gateway, 'deepseek');
-  const body: Record<string, unknown> = {
-    model: resolveLlmModel(input.env),
-    messages: input.messages,
-    stream: false,
+  const send = (profile: LlmProfile, messages: LlmMessage[]) => {
+    const planner = profile === 'planner';
+    const body: Record<string, unknown> = {
+      model: planner ? resolvePlannerModel(input.env) : resolveLlmModel(input.env),
+      messages,
+      stream: false,
+      // DeepSeek enables thinking by default, so chat must opt out explicitly.
+      thinking: { type: planner ? 'enabled' : 'disabled' },
+    };
+    if (planner) body.reasoning_effort = 'high';
+    if (input.maxTokens != null && Number.isFinite(input.maxTokens) && input.maxTokens > 0) {
+      body.max_tokens = Math.floor(input.maxTokens);
+    }
+    if (input.tools?.length) {
+      body.tools = input.tools;
+      body.tool_choice = input.toolChoice ?? 'auto';
+    }
+    return fetch(url, {
+      method: 'POST',
+      headers: aiGatewayRequestHeaders(input.env, apiKey),
+      body: JSON.stringify(body),
+    });
   };
-  if (input.maxTokens != null && Number.isFinite(input.maxTokens) && input.maxTokens > 0) {
-    body.max_tokens = Math.floor(input.maxTokens);
-  }
-  if (input.tools?.length) {
-    body.tools = input.tools;
-    body.tool_choice = input.toolChoice ?? 'auto';
-  }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: aiGatewayRequestHeaders(input.env, apiKey),
-    body: JSON.stringify(body),
-  });
+  const profile = input.profile ?? 'chat';
+  let response: Response;
+  if (profile === 'planner') {
+    // Planner trouble (e.g. 400 for history lacking reasoning_content, outage)
+    // must not break the chat: retry once on the chat model.
+    try {
+      response = await send('planner', input.messages);
+    } catch {
+      response = new Response(null, { status: 599 });
+    }
+    if (!response.ok) {
+      response = await send('chat', stripReasoning(input.messages));
+    }
+  } else {
+    response = await send('chat', stripReasoning(input.messages));
+  }
 
   if (!response.ok) {
     throw new Error(`Chat provider request failed (${response.status})`);
@@ -129,6 +170,9 @@ export async function completeChat(input: {
     role: 'assistant',
     content: content || null,
   };
+  if (profile === 'planner' && typeof message.reasoning_content === 'string' && message.reasoning_content) {
+    rawAssistantMessage.reasoning_content = message.reasoning_content;
+  }
   if (toolCalls.length) {
     rawAssistantMessage.tool_calls = toolCalls.map((tc) => ({
       id: tc.id,

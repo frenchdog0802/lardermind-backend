@@ -1,7 +1,8 @@
 import type { Env } from '../env';
 
 export const DEFAULT_AI_GATEWAY_ID = 'default';
-export const DEFAULT_LLM_MODEL = 'deepseek-chat';
+export const DEFAULT_LLM_MODEL = 'deepseek-flash';
+export const DEFAULT_PLANNER_MODEL = 'deepseek-v4-pro';
 export const DEFAULT_VISION_MODEL = 'gpt-4o';
 export const DEFAULT_VISION_TIMEOUT_MS = 60_000;
 
@@ -63,6 +64,10 @@ export function aiGatewayChatCompletionsUrl(
 
 export function resolveLlmModel(env: Env): string {
   return (env.LLM_MODEL || '').trim() || DEFAULT_LLM_MODEL;
+}
+
+export function resolvePlannerModel(env: Env): string {
+  return (env.LLM_PLANNER_MODEL || '').trim() || DEFAULT_PLANNER_MODEL;
 }
 
 export function resolveVisionModel(env: Env): string {

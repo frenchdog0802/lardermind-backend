@@ -13,7 +13,12 @@ describe('Workers AI chat deprecation guard', () => {
     expect(wranglerToml).not.toMatch(
       /AI_MODEL\s*=\s*"@cf\/meta\/llama-3\.1-8b-instruct/,
     );
-    expect(wranglerToml).toMatch(/LLM_MODEL\s*=\s*"deepseek-chat"/);
+    expect(wranglerToml).not.toMatch(/deepseek-chat/);
+    expect(wranglerToml.match(/LLM_MODEL\s*=\s*"deepseek-flash"/g)).toHaveLength(2);
+    expect(
+      wranglerToml.match(/LLM_PLANNER_MODEL\s*=\s*"deepseek-v4-pro"/g),
+    ).toHaveLength(2);
+    expect(wranglerToml.match(/OPENAI_VISION_MODEL\s*=\s*"gpt-4o"/g)).toHaveLength(2);
     expect(wranglerToml).toMatch(/CF_ACCOUNT_ID\s*=/);
     expect(wranglerToml).toMatch(/AI_GATEWAY_ID\s*=\s*"default"/);
   });
