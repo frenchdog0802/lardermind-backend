@@ -19,6 +19,24 @@ export const googleLoginBodySchema = z.object({
   guest_token: z.string().optional(),
 });
 
+export const appleLoginBodySchema = z.object({
+  identityToken: z.string().trim().min(1),
+  // expo-apple-authentication gives { givenName, familyName, ... } (all nullable), first sign-in only.
+  fullName: z
+    .union([
+      z.string().trim().max(200),
+      z
+        .object({
+          givenName: z.string().trim().max(100).nullish(),
+          familyName: z.string().trim().max(100).nullish(),
+        })
+        .passthrough(),
+    ])
+    .nullish(),
+  email: z.string().trim().max(320).nullish(),
+  guest_token: z.string().optional(),
+});
+
 export const claimGuestBodySchema = z.object({
   guest_token: z.string().trim().min(1),
 });
@@ -35,4 +53,5 @@ export const passwordResetConfirmBodySchema = z.object({
 
 export type SignupBody = z.infer<typeof signupBodySchema>;
 export type SigninBody = z.infer<typeof signinBodySchema>;
+export type AppleLoginBody = z.infer<typeof appleLoginBodySchema>;
 export type GoogleLoginBody = z.infer<typeof googleLoginBodySchema>;

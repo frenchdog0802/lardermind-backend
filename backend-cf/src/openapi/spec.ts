@@ -1,4 +1,4 @@
-import { signupBodySchema, signinBodySchema, googleLoginBodySchema } from '../schemas/auth';
+import { signupBodySchema, signinBodySchema, googleLoginBodySchema, appleLoginBodySchema } from '../schemas/auth';
 import { chatResumeBodySchema } from '../schemas/chat';
 import { shoppingWriteBodySchema } from '../schemas/shopping-list';
 import { zodToOpenApiSchema } from './zod-json';
@@ -91,6 +91,19 @@ export function buildOpenApiDocument() {
           },
         },
       },
+      '/api/auth/apple-login': {
+        post: {
+          operationId: 'appleLogin',
+          description:
+            'Sign in with Apple. identityToken is the Apple identity token (verified against Apple JWKS, iss https://appleid.apple.com, aud = APPLE_BUNDLE_ID). fullName / email are only sent by Apple on first authorization and only used to fill a new account. Response: { success, data: { token, user, claimed } }.',
+          requestBody: jsonBody('AppleLoginBody'),
+          responses: {
+            '200': { description: 'Signed in', content: { 'application/json': { schema: okSchema } } },
+            '400': { description: 'Validation or token error', content: { 'application/json': { schema: errorSchema } } },
+            '429': { description: 'Rate limited', content: { 'application/json': { schema: errorSchema } } },
+          },
+        },
+      },
       '/api/chat/resume': {
         post: {
           operationId: 'chatResume',
@@ -176,6 +189,7 @@ export function buildOpenApiDocument() {
         SignupBody: zodToOpenApiSchema(signupBodySchema),
         SigninBody: zodToOpenApiSchema(signinBodySchema),
         GoogleLoginBody: zodToOpenApiSchema(googleLoginBodySchema),
+        AppleLoginBody: zodToOpenApiSchema(appleLoginBodySchema),
         ChatResumeBody: zodToOpenApiSchema(chatResumeBodySchema),
         ShoppingWriteBody: zodToOpenApiSchema(shoppingWriteBodySchema),
       },

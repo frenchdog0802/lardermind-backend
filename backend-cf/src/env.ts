@@ -9,6 +9,8 @@ export type Env = {
   JWT_EXPIRES_IN_SECONDS: string;
   /** Web OAuth Client ID — ID token audience (same as VITE_GOOGLE_CLIENT_ID). */
   GOOGLE_CLIENT_ID: string;
+  /** iOS OAuth Client ID (comma list ok) — also accepted as Google ID token audience. */
+  GOOGLE_IOS_CLIENT_ID?: string;
   /** SPA origin for Google redirect callback (no trailing slash). */
   FRONTEND_URL: string;
   /** Cloudflare account id for AI Gateway URLs. */

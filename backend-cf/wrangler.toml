@@ -75,6 +75,9 @@ GOOGLE_CLIENT_ID = "603047692060-llk1cjf1b0f5bpdb9it5cvogk2b8haio.apps.googleuse
 # Vars (also via wrangler.toml [vars] or .dev.vars):
 #   STRIPE_PRICE_MONTHLY — price_…
 #   STRIPE_PRICE_YEARLY — price_…
+#   GOOGLE_IOS_CLIENT_ID — iOS OAuth client id (<n>-<hash>.apps.googleusercontent.com); extra Google ID token
+#     audience for the iOS app. Set per env: [vars] / [env.staging.vars] or `wrangler secret put GOOGLE_IOS_CLIENT_ID`.
+#   APPLE_BUNDLE_ID — defaults to com.lardermind.app (also the Sign in with Apple token audience)
 #   MAIL_FROM — e.g. "LarderMind <no-reply@lardermind.com>" (domain verified in Resend)
 #
 # Staging secrets (one-time; do not reuse production JWT_SECRET):

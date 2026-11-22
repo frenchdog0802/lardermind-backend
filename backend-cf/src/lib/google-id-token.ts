@@ -1,4 +1,4 @@
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 
 const GOOGLE_JWKS = createRemoteJWKSet(
   new URL('https://www.googleapis.com/oauth2/v3/certs'),
@@ -31,17 +31,30 @@ function isEmailVerified(value: unknown): boolean {
   return value === true || value === 'true';
 }
 
+/** Web + iOS client ids accepted as `aud` (each var may itself be a comma list). */
+export function googleAudiences(env: {
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_IOS_CLIENT_ID?: string;
+}): string[] {
+  return [env.GOOGLE_CLIENT_ID, env.GOOGLE_IOS_CLIENT_ID]
+    .flatMap((v) => (v ?? '').split(','))
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
 export async function verifyGoogleIdToken(
   idToken: string,
-  clientId: string,
+  clientId: string | string[],
+  keys: JWTVerifyGetKey = GOOGLE_JWKS,
 ): Promise<GoogleIdTokenProfile> {
   assertGoogleIdTokenShape(idToken);
-  if (!clientId) {
+  const audience = (Array.isArray(clientId) ? clientId : [clientId]).filter(Boolean);
+  if (audience.length === 0) {
     throw new Error('GOOGLE_CLIENT_ID not configured');
   }
 
-  const { payload } = await jwtVerify(idToken, GOOGLE_JWKS, {
-    audience: clientId,
+  const { payload } = await jwtVerify(idToken, keys, {
+    audience,
     issuer: GOOGLE_ISSUERS,
   });
 
